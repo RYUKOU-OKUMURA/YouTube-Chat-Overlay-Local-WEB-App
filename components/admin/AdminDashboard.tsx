@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { Copy, RefreshCcw, TestTube2 } from "lucide-react";
+import { Copy, MonitorCog, RefreshCcw, SlidersHorizontal, TestTube2 } from "lucide-react";
 import type { AppState, BroadcastStatus, ChatMessage, Settings, Theme, YouTubeStatus } from "@/types";
 import { socketEvents } from "@/types";
 import { Button } from "@/components/common/Button";
@@ -52,6 +52,7 @@ const emptyOverlay: AppState["overlay"] = {
 
 export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   const [state, setState] = useState<DashboardState | null>(null);
+  const [activeView, setActiveView] = useState<"control" | "admin">("control");
   const [socketConnected, setSocketConnected] = useState(false);
   const [notice, setNotice] = useState(initialNotice);
   const [broadcastUrl, setBroadcastUrl] = useState("");
@@ -149,7 +150,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
 
   useEffect(() => {
     if (!autoscroll || !listRef.current) return;
-    listRef.current.scrollTo({ top: 0, behavior: "smooth" });
+    listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
   }, [autoscroll, state?.messages.length, search]);
 
   useEffect(() => {
@@ -295,7 +296,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
         prev
           ? {
               ...prev,
-              messages: [result.message, ...prev.messages].slice(0, 300),
+              messages: [result.message, ...prev.messages.filter((message) => message.id !== result.message.id)].slice(0, 300),
               overlay: result.overlay
             }
           : prev
@@ -407,15 +408,16 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 px-4 py-4 text-slate-900">
+    <div className="min-h-screen bg-zinc-100 px-4 py-4 text-slate-900">
       <div className="mx-auto flex max-w-7xl flex-col gap-4">
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="px-5 py-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">ローカル操作パネル</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-red-600">配信者用ローカルツール</p>
               <h1 className="truncate text-2xl font-semibold text-slate-950">YouTubeコメントオーバーレイ管理</h1>
               <p className="mt-1 text-sm text-slate-600">
-                YouTubeライブコメントの取得、OBS表示、固定表示、テーマ調整をこの画面で操作します。
+                配信中のコメント操作と、接続・OBS設定をタブで切り替えます。
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -441,19 +443,50 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
             />
           </div>
           {notice ? <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">{notice}</div> : null}
+          </div>
+          <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-3">
+            <button
+              type="button"
+              onClick={() => setActiveView("control")}
+              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition ${
+                activeView === "control"
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              <MonitorCog className="h-4 w-4" />
+              操作画面
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView("admin")}
+              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition ${
+                activeView === "admin"
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+              管理・設定
+            </button>
+          </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
-          <div className="grid gap-4">
-            <OAuthPanel youtubeStatus={state.youtubeStatus} onConnect={connectYouTube} onDisconnect={disconnectYouTube} busy={busyAction === "oauth"} />
-            <BroadcastPanel
-              broadcastUrl={broadcastUrl}
-              setBroadcastUrl={setBroadcastUrl}
-              broadcastStatus={state.broadcastStatus}
-              onStart={startBroadcast}
-              onStop={stopBroadcast}
-              onCopyOverlayUrl={copyOverlayUrl}
-              busy={busyAction === "broadcast"}
+        {activeView === "control" ? (
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+            <MessagePanel
+              messages={filteredMessages}
+              selectedMessageId={selectedMessageId}
+              search={search}
+              setSearch={setSearch}
+              autoscroll={autoscroll}
+              setAutoscroll={setAutoscroll}
+              onSelectMessage={(message) => setSelectedMessageId(message.id)}
+              onShowMessage={showMessage}
+              onPinMessage={pinMessage}
+              onCopyMessage={copyMessage}
+              listRef={listRef}
+              filteredCount={filteredMessages.length}
             />
             <OverlayPanel
               overlay={state.overlay}
@@ -472,28 +505,42 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               onCopyOverlayUrl={copyOverlayUrl}
             />
           </div>
-
-          <div className="grid gap-4">
-            <MessagePanel
-              messages={filteredMessages}
-              selectedMessageId={selectedMessageId}
-              search={search}
-              setSearch={setSearch}
-              autoscroll={autoscroll}
-              setAutoscroll={setAutoscroll}
-              onSelectMessage={(message) => setSelectedMessageId(message.id)}
-              onShowMessage={showMessage}
-              onPinMessage={pinMessage}
-              onCopyMessage={copyMessage}
-              listRef={listRef}
-              filteredCount={filteredMessages.length}
-            />
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
+            <div className="grid gap-4">
+              <OAuthPanel youtubeStatus={state.youtubeStatus} onConnect={connectYouTube} onDisconnect={disconnectYouTube} busy={busyAction === "oauth"} />
+              <BroadcastPanel
+                broadcastUrl={broadcastUrl}
+                setBroadcastUrl={setBroadcastUrl}
+                broadcastStatus={state.broadcastStatus}
+                onStart={startBroadcast}
+                onStop={stopBroadcast}
+                onCopyOverlayUrl={copyOverlayUrl}
+                busy={busyAction === "broadcast"}
+              />
+              <OverlayPanel
+                overlay={state.overlay}
+                selectedMessage={selectedMessage}
+                onShow={() => {
+                  if (selectedMessage) void showMessage(selectedMessage);
+                }}
+                onPin={() => {
+                  if (selectedMessage) void pinMessage(selectedMessage);
+                }}
+                onHide={hideOverlay}
+                onUnpin={unpinOverlay}
+                onCopyMessage={() => {
+                  if (selectedMessage) void copyMessage(selectedMessage);
+                }}
+                onCopyOverlayUrl={copyOverlayUrl}
+              />
+            </div>
             <SettingsPanel
               settings={{ displayDurationSec: state.overlay.displayDurationSec, theme: state.overlay.theme }}
               onPatchSettings={patchSettings}
             />
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

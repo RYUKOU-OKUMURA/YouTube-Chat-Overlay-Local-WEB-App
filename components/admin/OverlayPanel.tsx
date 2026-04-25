@@ -34,12 +34,13 @@ export function OverlayPanel({
     <Panel
       title="現在のOBS表示"
       subtitle="OBSに出ているコメントと、次に表示するコメントを確認します。"
+      className="rounded-2xl bg-slate-50"
       actions={<Badge tone={overlay.isPinned ? "amber" : "slate"}>{overlay.isPinned ? "固定中" : "通常表示"}</Badge>}
     >
       <div className="grid gap-3">
         {active ? (
           <div
-            className="rounded-xl border border-slate-200 p-3"
+            className="rounded-2xl border border-slate-200 p-4 shadow-lg"
             style={{
               background: overlay.theme.backgroundColor,
               color: overlay.theme.textColor,
@@ -65,11 +66,11 @@ export function OverlayPanel({
             表示中のコメントはありません。コメントを選んで「表示」または「固定」を押してください。
           </div>
         )}
-        <div className="flex flex-wrap gap-2">
-          <Button icon={<Eye className="h-4 w-4" />} onClick={onShow} disabled={!active}>
+        <div className="grid grid-cols-2 gap-2">
+          <Button className="bg-red-600 hover:bg-red-500" icon={<Eye className="h-4 w-4" />} onClick={onShow} disabled={!active}>
             表示
           </Button>
-          <Button icon={<Pin className="h-4 w-4" />} onClick={onPin} disabled={!active}>
+          <Button className="bg-slate-950 hover:bg-slate-800" icon={<Pin className="h-4 w-4" />} onClick={onPin} disabled={!active}>
             固定
           </Button>
           <Button variant="ghost" icon={<EyeOff className="h-4 w-4" />} onClick={onHide}>
@@ -81,7 +82,7 @@ export function OverlayPanel({
           <Button variant="ghost" icon={<Copy className="h-4 w-4" />} onClick={onCopyMessage} disabled={!active}>
             コメントをコピー
           </Button>
-          <Button variant="ghost" icon={<MessageSquareMore className="h-4 w-4" />} onClick={onCopyOverlayUrl}>
+          <Button variant="ghost" className="col-span-2" icon={<MessageSquareMore className="h-4 w-4" />} onClick={onCopyOverlayUrl}>
             OBS URLをコピー
           </Button>
         </div>
