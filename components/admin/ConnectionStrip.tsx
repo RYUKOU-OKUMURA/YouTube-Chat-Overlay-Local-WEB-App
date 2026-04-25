@@ -1,0 +1,64 @@
+import { Radio, Wifi, WifiOff, MessageSquareText, Clock3 } from "lucide-react";
+import type { BroadcastStatus, YouTubeStatus } from "@/types";
+import { Badge } from "@/components/common/Badge";
+import { Button } from "@/components/common/Button";
+
+function oauthLabel(value: YouTubeStatus["oauth"]) {
+  return value === "authorized" ? "認可済み" : "未認可";
+}
+
+function apiLabel(value: YouTubeStatus["api"]) {
+  if (value === "connected") return "接続中";
+  if (value === "error") return "エラー";
+  return "未接続";
+}
+
+export function ConnectionStrip({
+  socketConnected,
+  overlayConnected,
+  youtubeStatus,
+  broadcastStatus,
+  lastSyncLabel,
+  onRefresh
+}: {
+  socketConnected: boolean;
+  overlayConnected: boolean;
+  youtubeStatus: YouTubeStatus;
+  broadcastStatus: BroadcastStatus;
+  lastSyncLabel?: string;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+      <Badge tone={socketConnected ? "green" : "amber"}>{socketConnected ? "Socket接続中" : "Socket再接続中"}</Badge>
+      <Badge tone={overlayConnected ? "green" : "slate"}>{overlayConnected ? "OBS接続中" : "OBS未接続"}</Badge>
+      <Badge tone={youtubeStatus.oauth === "authorized" ? "green" : "amber"}>{`${oauthLabel(youtubeStatus.oauth)} / ${apiLabel(youtubeStatus.api)}`}</Badge>
+      <Badge tone={broadcastStatus.isFetchingComments ? "blue" : "slate"}>
+        {broadcastStatus.isFetchingComments ? "コメント取得中" : "コメント停止中"}
+      </Badge>
+      {lastSyncLabel ? (
+        <span className="inline-flex items-center gap-1 text-slate-500">
+          <Clock3 className="h-3.5 w-3.5" />
+          {lastSyncLabel}
+        </span>
+      ) : null}
+      <div className="ml-auto">
+        <Button size="sm" variant="ghost" icon={<Radio className="h-3.5 w-3.5" />} onClick={onRefresh}>
+          再同期
+        </Button>
+      </div>
+      <span className="inline-flex items-center gap-1 text-slate-500">
+        <Wifi className="h-3.5 w-3.5" />
+        {socketConnected ? "接続済み" : "オフライン"}
+      </span>
+      <span className="inline-flex items-center gap-1 text-slate-500">
+        <WifiOff className="h-3.5 w-3.5" />
+        OBS {overlayConnected ? "待受中" : "未起動"}
+      </span>
+      <span className="inline-flex items-center gap-1 text-slate-500">
+        <MessageSquareText className="h-3.5 w-3.5" />
+        {broadcastStatus.liveChatId ? "チャット準備完了" : "チャット待機中"}
+      </span>
+    </div>
+  );
+}
