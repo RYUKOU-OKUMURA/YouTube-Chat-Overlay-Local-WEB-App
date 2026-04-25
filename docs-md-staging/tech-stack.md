@@ -1,11 +1,13 @@
 # 技術スタック
-# YouTube Chat Overlay WEB App v1.0
+# YouTube Chat Overlay Local WEB App v1.0
 
 ## 1. 全体方針
 
-フロントエンド、管理画面、OBSオーバーレイ、APIを1つのWebアプリとして構築する。
+管理画面、OBSオーバーレイ、API、Socket.IOサーバーを1つのローカルWEBアプリとして構築する。
 
-リアルタイム通信が必要なため、WebSocketを扱えるNode.js常駐サーバー構成にする。
+個人利用を前提とし、DB・本格ログイン・SaaS設計は採用しない。
+コメント履歴は保存せず、配信中のコメントはアプリ起動中だけメモリ上に保持する。
+
 OBSには `/overlay/{overlayToken}` のURLをBrowser Sourceとして登録する。
 
 ## 2. 推奨スタック
@@ -16,41 +18,43 @@ OBSには `/overlay/{overlayToken}` のURLをBrowser Sourceとして登録する
 - React
 - TypeScript
 - Tailwind CSS
-- shadcn/ui
 - Framer Motion
+- Socket.IO Client
 
 用途:
-- ログイン画面
-- ダッシュボード
-- 配信登録画面
 - 管理画面
 - OBSオーバーレイ画面
+- コメント一覧表示
+- テーマ設定
+- 表示秒数設定
+- 接続状態表示
 
 理由:
 - 管理画面とオーバーレイを同一プロジェクトで作れる
-- TypeScriptで安全に開発できる
-- Tailwind CSSでOBS用デザインを作りやすい
-- Framer Motionでコメントカードのアニメーションを作りやすい
+- TypeScriptでイベントと状態を安全に扱える
+- Tailwind CSSでOBS用の透明背景UIを作りやすい
+- Framer Motionでコメントカードの表示アニメーションを作りやすい
 
 ## 3. バックエンド
 
 - Node.js
+- Next.js Custom Server
 - Next.js Route Handlers
-- Custom Server
 - TypeScript
 
 用途:
 - APIエンドポイント
+- YouTube OAuth処理
 - YouTube API連携
-- OAuth処理
-- コメント取得ジョブ
-- WebSocketサーバー
+- ライブチャットコメント取得ジョブ
+- Socket.IOサーバー
 - OBSオーバーレイへのイベント配信
+- ローカルJSON設定の読み書き
 
 補足:
-- WebSocket常時接続が必要なため、サーバーレス専用構成にはしない
-- 最初はNext.js + Custom Serverでまとめる
-- 将来的にバックエンドだけNestJSやFastifyへ分離してもよい
+- Socket.IOを同一ポートで動かすため、Next.js Custom Serverを使う
+- サーバーレス構成やVercel前提にはしない
+- ローカルPCで `localhost:3000` として起動する
 
 ## 4. リアルタイム通信
 
@@ -60,7 +64,7 @@ OBSには `/overlay/{overlayToken}` のURLをBrowser Sourceとして登録する
 - 管理画面への新着コメント配信
 - 管理画面からOBSオーバーレイへの表示イベント配信
 - OBSオーバーレイの接続状態確認
-- 自動再接続
+- Socket切断時の自動再接続
 
 イベント例:
 - comment:new
@@ -70,88 +74,99 @@ OBSには `/overlay/{overlayToken}` のURLをBrowser Sourceとして登録する
 - overlay:unpin
 - overlay:theme:update
 - overlay:connected
+- overlay:test
 - youtube:status
 
 理由:
 - WebSocket接続管理がしやすい
 - 自動再接続を扱いやすい
-- 管理画面とOBSオーバーレイの両方に配信しやすい
+- 管理画面とOBSオーバーレイの両方にイベント配信しやすい
 
-## 5. データベース
+## 5. データ管理
 
-- PostgreSQL
+DBは使用しない。
 
-用途:
-- ユーザー情報
-- YouTube連携情報
-- 配信ルーム情報
-- オーバーレイトークン
-- コメント履歴
-- 表示状態
-- テーマ設定
+### メモリ管理
 
-理由:
-- SaaS化しやすい
-- 将来的な課金、チーム、複数配信管理に拡張しやすい
-- コメントや配信ルームのリレーション管理がしやすい
+アプリ起動中のみ以下をメモリに保持する。
 
-## 6. ORM
+- 現在の配信URL
+- videoId
+- liveChatId
+- nextPageToken
+- 取得済みコメントID Set
+- 最新コメント一覧 100〜300件
+- 現在OBSに表示中のコメント
+- 固定表示状態
+- YouTube接続状態
+- OBS接続状態
+- コメント取得タイマー
 
-- Prisma
+### ローカルJSON保存
 
-用途:
-- DBスキーマ管理
-- マイグレーション
-- 型安全なDBアクセス
+必要最小限の設定だけローカルJSONに保存する。
 
-理由:
-- TypeScriptとの相性がいい
-- User、BroadcastRoom、ChatMessageなどのモデル管理がしやすい
-- MVP開発が速い
+保存先:
+- data/settings.json
+- data/youtube-token.json
 
-## 7. 認証
+settings.json:
+- overlayToken
+- displayDurationSec
+- theme
+- lastBroadcastUrl
 
-- Auth.js
-- Google OAuth
+youtube-token.json:
+- accessToken
+- refreshToken
+- expiryDate
 
-用途:
-- Googleログイン
-- セッション管理
-- YouTube Data APIのOAuth連携
+注意:
+- `data/youtube-token.json` はGit管理しない
+- コメント履歴は保存しない
+
+## 6. 認証・YouTube OAuth
+
+- Google OAuth 2.0
+- YouTube Data API / YouTube Live Streaming API
 
 必要スコープ:
 - https://www.googleapis.com/auth/youtube.readonly
 
-将来必要になり得るスコープ:
-- https://www.googleapis.com/auth/youtube.force-ssl
+用途:
+- YouTubeライブ配信情報の取得
+- liveChatIdの取得
+- ライブチャットコメントの取得
 
 方針:
-- 初期版では読み取り中心にする
-- 必要以上の権限を要求しない
-- リフレッシュトークンは暗号化してDB保存する
-- アクセストークンの期限切れ時に更新する
+- アプリ利用者は本人のみ
+- 本格ログイン画面は作らない
+- 初回だけGoogle認可URLへ遷移する
+- OAuthコールバックでトークンを受け取る
+- トークンはローカルJSONに保存する
+- アクセストークン期限切れ時はリフレッシュする
 
-## 8. YouTube API
+## 7. YouTube API
 
 使用API:
 - YouTube Data API v3
 - YouTube Live Streaming API
 
 使用する主な処理:
-- 配信情報取得
-- liveChatId取得
+- videoIdから配信情報取得
+- liveStreamingDetails.activeLiveChatIdの取得
 - ライブチャットコメント取得
 
 コメント取得方式:
-- 第一候補: liveChatMessages.streamList
-- 第二候補: liveChatMessages.list
+- 第一候補: liveChatMessages.list
+- 将来候補: liveChatMessages.streamList
 
 実装方針:
-- streamListが安定して使える場合はstreamListを使う
-- 実装や運用で扱いづらい場合はlistでポーリングする
-- listを使う場合はnextPageTokenとpollingIntervalMillisを使う
+- MVPではliveChatMessages.listでポーリングする
+- nextPageTokenを保持する
+- pollingIntervalMillisに従って次回取得する
 - コメントIDで重複排除する
-- APIエラー時は管理画面に状態を表示する
+- エラー時は管理画面に状態を表示する
 
 取得するコメント情報:
 - messageId
@@ -166,12 +181,11 @@ OBSには `/overlay/{overlayToken}` のURLをBrowser Sourceとして登録する
 - isChatSponsor
 - Super Chat関連情報
 
-## 9. OBSオーバーレイ
+## 8. OBSオーバーレイ
 
 技術:
 - Next.js page
 - React
-- CSS
 - Tailwind CSS
 - Framer Motion
 - Socket.IO Client
@@ -185,19 +199,19 @@ URL:
 - 背景透明
 - 1920x1080対応
 - 1280x720対応
-- WebSocketでイベント受信
+- Socket.IOでイベント受信
 - コメントカードをアニメーション表示
-- CSSでテーマ反映
+- CSS変数でテーマ反映
 
 OBS Browser Source設定例:
-- URL: https://example.com/overlay/{overlayToken}
+- URL: http://localhost:3000/overlay/{overlayToken}
 - Width: 1920
 - Height: 1080
 - Custom CSS: 原則不要
 - Shutdown source when not visible: 任意
 - Refresh browser when scene becomes active: 任意
 
-## 10. スタイリング
+## 9. スタイリング
 
 - Tailwind CSS
 - CSS Variables
@@ -223,17 +237,18 @@ OBS Browser Source設定例:
 - scale-in
 - fade-out
 
-## 11. 状態管理
+## 10. 状態管理
 
 ### 管理画面
 
 - React useState
-- React Query / TanStack Query
+- React useEffect
 - Socket.IO events
+- 必要に応じてSWRまたはTanStack Query
 
 用途:
 - コメント一覧
-- 配信ルーム情報
+- 配信情報
 - テーマ設定
 - 接続状態
 - 現在表示中コメント
@@ -242,6 +257,7 @@ OBS Browser Source設定例:
 
 - React useState
 - Socket.IO events
+- setTimeoutによる表示タイマー
 
 用途:
 - 現在表示中コメント
@@ -249,138 +265,154 @@ OBS Browser Source設定例:
 - テーマ設定
 - 表示タイマー
 
-## 12. バリデーション
+### サーバー側
+
+- Node.jsプロセスメモリ
+- Map / Set
+- タイマー管理
+- ローカルJSON読み書き
+
+## 11. バリデーション
 
 - Zod
 
 用途:
-- APIリクエストのバリデーション
 - YouTube URL入力チェック
+- APIリクエストのバリデーション
 - テーマ設定値チェック
 - 表示秒数チェック
-- WebSocket payloadチェック
+- Socket.IO payloadチェック
 
-## 13. セキュリティ
+## 12. セキュリティ
 
-使用技術:
-- Auth.js session
-- CSRF対策
-- HTTP Only Cookie
-- OAuth state検証
-- 環境変数管理
-- トークン暗号化
-- DOMPurifyまたはReact標準エスケープ
+個人利用前提のため、SaaS向けの厳密な権限管理は行わない。
 
-方針:
-- コメント本文をHTMLとして描画しない
-- APIキーをフロントに出さない
-- overlayTokenは十分長いランダム文字列にする
-- overlayTokenから管理APIを実行できないようにする
-- 管理APIはログイン必須にする
-- WebSocket接続時にroomIdと権限を検証する
+最低限守ること:
+- `.env` をGit管理しない
+- `data/youtube-token.json` をGit管理しない
+- コメント本文をHTMLとして直接描画しない
+- Reactの標準エスケープを使う
+- overlayTokenをランダム生成する
+- オーバーレイ画面から管理APIを実行できないようにする
+- 管理画面は基本的にlocalhost利用とする
 
-## 14. ホスティング
+## 13. ホスティング・実行環境
 
 ### MVP開発
 
 - ローカル開発
-- Docker Compose
-- PostgreSQL local
-- ngrok / Cloudflare Tunnel
+- Node.js
+- pnpm
+- localhost:3000
 
 用途:
-- OBSでローカルURLを表示確認
-- OAuth callback確認
-- WebSocket確認
+- 管理画面をブラウザで操作
+- OBS Browser SourceでローカルURLを表示
+- YouTube OAuth callback確認
+- Socket.IO確認
 
-### 本番候補
+### 任意
 
-- Node.js常駐サーバーを動かせる環境
-- PostgreSQLを利用できる環境
-- HTTPSを使える環境
-- WebSocketを安定して扱える環境
+- ngrok
+- Cloudflare Tunnel
 
-候補:
-- Railway
-- Render
-- Fly.io
-- Google Cloud Run
-- AWS ECS
-- VPS
+用途:
+- OAuthコールバック検証
+- 別端末から管理画面を触る場合
 
 注意:
-- WebSocketを使うため、常時接続に向いた環境を選ぶ
-- OBS Browser Sourceで使うためHTTPS対応が望ましい
-- ローカル専用アプリとして配る場合はElectron化も検討できる
+- 基本はローカルPC上で完結させる
+- 本番SaaSデプロイは初期対象外
 
-## 15. 開発環境
+## 14. 開発環境
 
 - Node.js
 - pnpm
-- Docker
-- Docker Compose
-- PostgreSQL
-- Prisma CLI
-- ngrok or Cloudflare Tunnel
+- TypeScript
+- Next.js
+- Socket.IO
+- Tailwind CSS
 
 ローカル構成:
-- app: localhost:3000
-- websocket: localhost:3000
-- db: localhost:5432
+- app: http://localhost:3000
+- websocket: http://localhost:3000/socket.io
 - overlay: http://localhost:3000/overlay/{overlayToken}
-- admin: http://localhost:3000/rooms/{roomId}/admin
+- admin: http://localhost:3000/admin
 
-## 16. テスト
+不要なもの:
+- PostgreSQL
+- Prisma
+- Docker Compose
+- Auth.js
+- Sentry
+- 課金基盤
+- ユーザー管理DB
+
+## 15. テスト
 
 - Vitest
 - React Testing Library
 - Playwright
 
-テスト対象:
+優先テスト対象:
 - YouTube URLパース
 - liveChatId取得処理
 - コメント重複排除
-- WebSocketイベント送受信
+- pollingIntervalMillisに従ったポーリング
+- Socket.IOイベント送受信
 - overlay:showイベント
 - overlay:hideイベント
+- overlay:pinイベント
 - 表示秒数タイマー
 - テーマ反映
-- 認証ガード
-- APIバリデーション
 
-## 17. ログ・監視
+## 16. ログ
 
-- pino
-- Sentry
-- Basic access logs
+- console
+- pino 任意
 
 ログ対象:
-- ログイン成功/失敗
-- YouTube連携成功/失敗
-- 配信登録
+- YouTube OAuth成功/失敗
+- 配信URL登録
+- liveChatId取得成功/失敗
 - コメント取得開始/停止
 - YouTube APIエラー
-- WebSocket接続/切断
+- Socket.IO接続/切断
 - OBS overlay接続/切断
 - 表示イベント
 
-## 18. ディレクトリ構成案
+## 17. ディレクトリ構成案
 
 ```text
 /app
-  /login
-  /dashboard
-  /broadcasts/new
-  /rooms/[roomId]/admin
+  /admin
+    page.tsx
   /overlay/[overlayToken]
+    page.tsx
   /api
-    /rooms
     /youtube
-    /settings
-    /auth
+      /auth-url/route.ts
+      /callback/route.ts
+      /status/route.ts
+      /disconnect/route.ts
+    /broadcast
+      /start/route.ts
+      /stop/route.ts
+      /status/route.ts
+    /messages
+      /route.ts
+      /[messageId]
+        /show/route.ts
+        /pin/route.ts
+    /overlay
+      /hide/route.ts
+      /unpin/route.ts
+    /settings/route.ts
+    /test-message/route.ts
 
 /components
   /admin
+    BroadcastForm.tsx
     CommentList.tsx
     CommentItem.tsx
     OverlayPreview.tsx
@@ -392,100 +424,93 @@ OBS Browser Source設定例:
   /common
     Button.tsx
     Input.tsx
-    Modal.tsx
+    Switch.tsx
+    Slider.tsx
 
 /server
   /youtube
+    oauth.ts
+    tokenStore.ts
     getLiveChatId.ts
     fetchLiveChatMessages.ts
-    streamLiveChatMessages.ts
     parseYouTubeUrl.ts
+    commentPoller.ts
   /realtime
     socketServer.ts
     events.ts
-  /auth
-    googleOAuth.ts
-    tokenCrypto.ts
-  /rooms
-    roomService.ts
-  /messages
-    messageService.ts
+  /state
+    appState.ts
+    overlayState.ts
+    messageStore.ts
+  /settings
+    settingsStore.ts
 
-/prisma
-  schema.prisma
-  migrations
+/data
+  settings.json
+  youtube-token.json
 
 /lib
   env.ts
-  db.ts
   logger.ts
   validation.ts
 
 /types
   message.ts
-  room.ts
   theme.ts
   socket-events.ts
 ```
 
-## 19. MVP実装順序
+## 18. MVP実装順序
 
 ### Phase 1: 基礎
 
 1. Next.jsプロジェクト作成
 2. TypeScript設定
 3. Tailwind CSS設定
-4. Prisma設定
-5. PostgreSQL接続
-6. Auth.jsでGoogleログイン実装
+4. Custom Server作成
+5. Socket.IOサーバー実装
+6. 管理画面とオーバーレイ画面の土台作成
 
-### Phase 2: 配信登録
-
-1. YouTube URLパーサー実装
-2. YouTube API連携
-3. liveChatId取得
-4. BroadcastRoom作成
-5. overlayToken発行
-
-### Phase 3: コメント取得
-
-1. コメント取得サービス実装
-2. コメント重複排除
-3. ChatMessage保存
-4. 管理画面にコメント一覧表示
-5. 接続状態表示
-
-### Phase 4: OBSオーバーレイ
+### Phase 2: OBS表示
 
 1. /overlay/{overlayToken} 作成
 2. 透明背景設定
 3. コメントカード作成
 4. アニメーション実装
-5. OBS Browser Sourceで表示確認
+5. テストコメント送信
+6. OBS Browser Sourceで表示確認
 
-### Phase 5: リアルタイム表示
+### Phase 3: リアルタイム操作
 
-1. Socket.IOサーバー実装
-2. 管理画面Socket接続
-3. オーバーレイSocket接続
-4. overlay:show実装
-5. overlay:hide実装
-6. overlay:pin実装
-7. テストコメント実装
+1. 管理画面Socket接続
+2. オーバーレイSocket接続
+3. overlay:show実装
+4. overlay:hide実装
+5. overlay:pin実装
+6. overlay:unpin実装
 
-### Phase 6: 設定
+### Phase 4: YouTube連携
+
+1. YouTube OAuth実装
+2. トークンのローカル保存
+3. YouTube URLパーサー実装
+4. videoIdからliveChatId取得
+5. liveChatMessages.listでコメント取得
+6. コメント重複排除
+7. 管理画面にコメント一覧表示
+
+### Phase 5: 設定
 
 1. 表示秒数設定
 2. テーマ設定
-3. テーマのDB保存
+3. settings.json保存
 4. overlay:theme:update実装
 5. UI調整
 
-### Phase 7: 仕上げ
+### Phase 6: 仕上げ
 
 1. エラー表示
-2. ログ追加
+2. 接続状態表示
 3. 再接続処理
-4. セキュリティ確認
+4. コメント取得停止処理
 5. OBS実機テスト
-6. 本番デプロイ
