@@ -1,6 +1,7 @@
 export type Badge = "member" | "moderator" | "owner" | "superChat";
 
 export type Theme = {
+  stylePreset: "midnight-glass" | "warm-pop" | "minimal-broadcast" | "festival-neon" | "clinic-calm" | "comic-pop";
   fontFamily: string;
   fontSize: number;
   cardWidth: number;
@@ -103,6 +104,7 @@ export type PatchSettingsInput = Partial<{
 }>;
 
 export const defaultTheme: Theme = {
+  stylePreset: "midnight-glass",
   fontFamily: "Inter, system-ui, sans-serif",
   fontSize: 28,
   cardWidth: 760,

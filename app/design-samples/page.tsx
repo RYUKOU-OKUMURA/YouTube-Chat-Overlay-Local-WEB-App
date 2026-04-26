@@ -1,4 +1,6 @@
 import { Check, Copy, EyeOff, Pin, Play, Radio, Search, Settings } from "lucide-react";
+import { overlayStylePresets } from "@/lib/themePresets";
+import type { Theme } from "@/types";
 
 const messages = [
   { author: "整体チャンネル", time: "02:15", text: "肩こりのセルフケアは毎日やった方がいいですか？", type: "member" },
@@ -60,6 +62,130 @@ function SampleChrome({ label, title, children }: { label: string; title: string
   );
 }
 
+function previewFrameStyle(theme: Partial<Theme>) {
+  const accent = theme.accentColor ?? "#38bdf8";
+  const base = {
+    background: theme.backgroundColor,
+    color: theme.textColor,
+    borderRadius: theme.borderRadius,
+    fontFamily: theme.fontFamily
+  };
+
+  if (theme.stylePreset === "clinic-calm") {
+    return {
+      ...base,
+      border: "1px solid rgba(20, 184, 166, 0.34)",
+      backgroundImage: "linear-gradient(135deg, rgba(255,255,255,0.96), rgba(204,251,241,0.88))",
+      boxShadow: "0 22px 42px rgba(15, 23, 42, 0.18), 0 0 32px rgba(20, 184, 166, 0.32), inset 0 0 26px rgba(255,255,255,0.68)"
+    };
+  }
+  if (theme.stylePreset === "warm-pop") {
+    return { ...base, border: "2px solid rgba(251, 113, 133, 0.38)", backgroundImage: "radial-gradient(circle at 14% 20%, rgba(251, 113, 133, 0.2), transparent 32%)", boxShadow: "0 18px 38px rgba(154, 52, 18, 0.18)" };
+  }
+  if (theme.stylePreset === "minimal-broadcast") {
+    return {
+      ...base,
+      border: "1px solid rgba(245, 158, 11, 0.42)",
+      backgroundImage: "repeating-linear-gradient(135deg, rgba(255,255,255,0.045) 0 1px, transparent 1px 8px), linear-gradient(180deg, rgba(17,24,39,0.96), rgba(0,0,0,0.94))",
+      boxShadow: "0 0 0 1px rgba(255,255,255,0.08), 0 14px 38px rgba(0,0,0,0.44), 0 0 28px rgba(245,158,11,0.22)"
+    };
+  }
+  if (theme.stylePreset === "festival-neon") {
+    return { ...base, border: `1px solid ${accent}`, backgroundImage: "linear-gradient(135deg, rgba(244, 114, 182, 0.14), rgba(56, 189, 248, 0.1))", boxShadow: `0 0 24px ${accent}, 0 20px 48px rgba(0, 0, 0, 0.34)` };
+  }
+  if (theme.stylePreset === "comic-pop") {
+    return {
+      ...base,
+      border: `5px solid ${accent}`,
+      backgroundImage: "radial-gradient(circle at 88% 26%, rgba(37, 99, 235, 0.18) 0 2px, transparent 2px 9px)",
+      boxShadow: "10px 10px 0 rgba(37, 99, 235, 0.34), 0 0 0 3px rgba(15,23,42,0.95), 0 20px 36px rgba(15, 23, 42, 0.22)"
+    };
+  }
+  return { ...base, boxShadow: "0 20px 45px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(255, 255, 255, 0.08)" };
+}
+
+function OverlayStylePreview({ preset }: { preset: (typeof overlayStylePresets)[number] }) {
+  const theme = preset.theme;
+  const accent = theme.accentColor ?? "#38bdf8";
+
+  return (
+    <article className="grid gap-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-zinc-950">{preset.name}</h3>
+            <p className="mt-1 text-sm font-semibold text-zinc-500">{preset.mood}</p>
+          </div>
+          <span className="rounded-full px-3 py-1 text-xs font-bold text-white" style={{ background: accent }}>
+            {theme.animationType}
+          </span>
+        </div>
+        <p className="mt-2 text-sm leading-6 text-zinc-600">{preset.description}</p>
+      </div>
+      <div className="grid min-h-[220px] place-items-center rounded-xl bg-[linear-gradient(135deg,#1f2937,#0f172a)] p-5">
+        <div
+          className={`relative w-full ${theme.stylePreset === "minimal-broadcast" ? "max-w-[640px] px-7 pb-4 pt-10" : theme.stylePreset === "clinic-calm" ? "max-w-[560px] py-5 pl-24 pr-6" : "max-w-[560px] px-5 py-4"}`}
+          style={previewFrameStyle(theme)}
+        >
+          {theme.stylePreset === "clinic-calm" ? (
+            <>
+              <span className="absolute bottom-0 left-0 top-0 w-16" style={{ background: `linear-gradient(180deg, ${accent}, #0f766e)`, borderRadius: `${theme.borderRadius}px 0 0 ${theme.borderRadius}px` }} />
+              <span className="absolute left-5 top-1/2 -translate-y-1/2 text-4xl font-black text-white">+</span>
+              <span className="absolute right-8 top-8 h-0.5 w-24" style={{ background: accent }} />
+              <span className="absolute right-20 top-5 h-8 w-5 border-l-2 border-r-2" style={{ borderColor: accent }} />
+            </>
+          ) : null}
+          {theme.stylePreset === "minimal-broadcast" ? (
+            <>
+              <span className="absolute left-0 top-0 h-8 w-44 -skew-x-12" style={{ background: accent }} />
+              <span className="absolute bottom-0 left-8 top-12 w-1.5 rounded-full" style={{ background: accent, boxShadow: `0 0 16px ${accent}` }} />
+              <span className="absolute right-7 top-3 text-[10px] font-black tracking-[0.18em] text-white/80">LIVE COMMENT</span>
+              <span className="absolute bottom-0 right-8 h-full w-12 skew-x-[-24deg]" style={{ background: `linear-gradient(90deg, transparent, ${accent})` }} />
+            </>
+          ) : null}
+          {theme.stylePreset === "festival-neon" ? <span className="absolute -right-3 -top-3 h-8 w-8 rounded-full" style={{ background: accent, boxShadow: `0 0 22px ${accent}` }} /> : null}
+          {theme.stylePreset === "warm-pop" ? (
+            <div className="absolute right-7 top-7 flex gap-1.5">
+              <span className="h-3 w-3 rounded-full" style={{ background: accent }} />
+              <span className="h-3 w-3 rounded-full bg-amber-300" />
+              <span className="h-3 w-3 rounded-full bg-sky-300" />
+            </div>
+          ) : null}
+          <div className={theme.stylePreset === "minimal-broadcast" ? "flex items-center gap-3" : "flex items-start gap-4"}>
+            {theme.showAvatar ? (
+              <div
+                className="grid h-12 w-12 shrink-0 place-items-center border border-white/20 bg-white/15 text-base font-bold"
+                style={{ borderRadius: theme.stylePreset === "comic-pop" ? 999 : 14, borderColor: theme.stylePreset === "comic-pop" ? accent : undefined }}
+              >
+                PB
+              </div>
+            ) : null}
+            <div className="min-w-0">
+              {theme.showAuthorName ? (
+                <div
+                  className={theme.stylePreset === "minimal-broadcast" ? "inline-flex -skew-x-12 px-3 py-1 text-xs font-black text-slate-950" : "truncate text-sm font-bold"}
+                  style={{ background: theme.stylePreset === "minimal-broadcast" ? accent : undefined, color: theme.stylePreset === "comic-pop" ? accent : undefined }}
+                >
+                  視聴者さん
+                </div>
+              ) : null}
+              <p className={`mt-2 whitespace-pre-wrap font-semibold ${theme.stylePreset === "minimal-broadcast" ? "pl-6 text-[23px] leading-[1.32]" : "text-[22px] leading-[1.45]"}`}>肩こりのセルフケア、配信を見ながら一緒にやっても大丈夫ですか？</p>
+              <div className="mt-3 inline-flex rounded-full px-3 py-1 text-xs font-bold" style={{ background: `${accent}22`, color: theme.textColor }}>
+                メンバー
+              </div>
+            </div>
+          </div>
+          {theme.stylePreset === "comic-pop" ? <span className="absolute -bottom-4 left-12 h-8 w-8 rotate-45" style={{ background: theme.backgroundColor, borderBottom: `3px solid ${accent}`, borderRight: `3px solid ${accent}` }} /> : null}
+        </div>
+      </div>
+      <div className="grid gap-2 text-sm text-zinc-600">
+        <div>Font: {theme.fontFamily}</div>
+        <div>Position: {theme.cardPosition} / Width: {theme.cardWidth}px</div>
+      </div>
+    </article>
+  );
+}
+
 export default function DesignSamplesPage() {
   return (
     <main className="min-h-screen bg-zinc-100 p-8 text-zinc-950">
@@ -68,6 +194,18 @@ export default function DesignSamplesPage() {
           <p className="text-sm font-semibold text-red-600">UI改善サンプル</p>
           <h1 className="text-3xl font-bold">YouTubeライブコメント操作画面</h1>
         </div>
+
+        <section className="grid gap-4">
+          <div>
+            <p className="text-sm font-semibold text-red-600">OBSコメントスタイル</p>
+            <h2 className="text-2xl font-bold">気分やテーマで切り替える表示パターン</h2>
+          </div>
+          <div className="grid gap-5 lg:grid-cols-2">
+            {overlayStylePresets.map((preset) => (
+              <OverlayStylePreview key={preset.id} preset={preset} />
+            ))}
+          </div>
+        </section>
 
         <SampleChrome label="Sample A" title="YouTube Studio寄せ">
           <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_360px]">

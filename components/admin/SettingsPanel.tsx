@@ -1,9 +1,10 @@
-import { Palette, Clock3, Check } from "lucide-react";
+import { Palette, Clock3, Check, Sparkles } from "lucide-react";
+import type { CSSProperties } from "react";
 import type { Settings, Theme } from "@/types";
 import { Badge } from "@/components/common/Badge";
-import { Button } from "@/components/common/Button";
 import { Field } from "@/components/common/Field";
 import { Panel } from "@/components/common/Panel";
+import { overlayStylePresets } from "@/lib/themePresets";
 
 const fontFamilies = [
   "Inter, system-ui, sans-serif",
@@ -37,6 +38,44 @@ const animationLabels: Record<Theme["animationType"], string> = {
   scale: "拡大"
 };
 
+function presetCardStyle(preset: (typeof overlayStylePresets)[number], active: boolean): CSSProperties {
+  const accent = preset.theme.accentColor ?? "#38bdf8";
+  const ink = preset.theme.textColor ?? "#0f172a";
+
+  if (preset.id === "clinic-calm") {
+    return {
+      background: "linear-gradient(135deg, rgba(236,253,250,0.98), rgba(255,255,255,0.92))",
+      borderColor: active ? accent : "rgba(20,184,166,0.36)",
+      color: "#0f172a",
+      boxShadow: active ? `0 0 0 2px ${accent}, 0 16px 30px rgba(20,184,166,0.18)` : "0 10px 24px rgba(20,184,166,0.1)"
+    };
+  }
+
+  if (preset.id === "minimal-broadcast") {
+    return {
+      background: "repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 8px), linear-gradient(180deg, #111827, #020617)",
+      borderColor: active ? accent : "rgba(245,158,11,0.42)",
+      color: "#f8fafc",
+      boxShadow: active ? `0 0 0 2px ${accent}, 0 16px 32px rgba(245,158,11,0.18)` : "0 10px 24px rgba(2,6,23,0.18)"
+    };
+  }
+
+  if (preset.id === "comic-pop") {
+    return {
+      background: "radial-gradient(circle at 88% 28%, rgba(37,99,235,0.18) 0 2px, transparent 2px 9px), #ffffff",
+      borderColor: active ? accent : "rgba(37,99,235,0.52)",
+      color: "#111827",
+      boxShadow: active ? `6px 6px 0 rgba(37,99,235,0.28), 0 0 0 2px ${accent}` : "6px 6px 0 rgba(37,99,235,0.16)"
+    };
+  }
+
+  return {
+    background: active ? "#020617" : "#ffffff",
+    borderColor: active ? "#020617" : "#e2e8f0",
+    color: active ? "#ffffff" : ink
+  };
+}
+
 type SettingsPatch = {
   displayDurationSec?: number;
   theme?: Partial<Theme>;
@@ -55,6 +94,54 @@ export function SettingsPanel({
   return (
     <Panel title="表示・テーマ設定" subtitle="配信中でも読みやすい表示へ調整できます。">
       <div className="grid gap-4">
+        <div className="grid gap-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+            <Sparkles className="h-4 w-4 text-slate-500" />
+            <span>スタイルプリセット</span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {overlayStylePresets.map((preset) => {
+              const active = theme.stylePreset === preset.id;
+
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => onPatchSettings({ theme: preset.theme })}
+                  className="relative grid min-h-[128px] content-between overflow-hidden rounded-xl border p-3 text-left transition hover:-translate-y-0.5"
+                  style={presetCardStyle(preset, active)}
+                >
+                  {preset.id === "clinic-calm" ? (
+                    <>
+                      <span className="absolute bottom-0 left-0 top-0 w-8" style={{ background: `linear-gradient(180deg, ${preset.theme.accentColor}, #0f766e)` }} />
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xl font-black text-white">+</span>
+                      <span className="absolute right-5 top-5 h-0.5 w-20" style={{ background: preset.theme.accentColor }} />
+                    </>
+                  ) : null}
+                  {preset.id === "minimal-broadcast" ? (
+                    <>
+                      <span className="absolute left-0 top-0 h-7 w-36 -skew-x-12" style={{ background: preset.theme.accentColor }} />
+                      <span className="absolute right-5 top-4 text-[10px] font-black tracking-[0.18em] text-white/70">LIVE</span>
+                      <span className="absolute bottom-0 right-8 h-full w-10 skew-x-[-24deg]" style={{ background: `linear-gradient(90deg, transparent, ${preset.theme.accentColor})` }} />
+                    </>
+                  ) : null}
+                  <div>
+                    <div className={`flex items-center justify-between gap-2 ${preset.id === "clinic-calm" ? "pl-10" : ""}`}>
+                      <span className="text-sm font-bold">{preset.name}</span>
+                      {active ? <Check className="h-4 w-4" /> : null}
+                    </div>
+                    <p className={`mt-1 text-xs leading-5 ${preset.id === "clinic-calm" ? "pl-10" : ""} ${preset.id === "minimal-broadcast" ? "text-white/72" : active && !["clinic-calm", "comic-pop"].includes(preset.id) ? "text-slate-200" : "text-slate-500"}`}>{preset.mood}</p>
+                  </div>
+                  <div className="mt-3 flex gap-1.5">
+                    <span className="h-5 w-5 rounded-full border border-white/40" style={{ background: preset.theme.backgroundColor }} />
+                    <span className="h-5 w-5 rounded-full border border-white/40" style={{ background: preset.theme.textColor }} />
+                    <span className="h-5 w-5 rounded-full border border-white/40" style={{ background: preset.theme.accentColor }} />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div className="grid gap-3 md:grid-cols-2">
           <Field label="表示秒数" hint="固定表示でないコメントが自動で消えるまでの秒数です。">
             <label className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3">

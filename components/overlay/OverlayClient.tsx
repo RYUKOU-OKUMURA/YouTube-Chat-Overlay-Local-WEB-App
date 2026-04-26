@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { io, type Socket } from "socket.io-client";
 import type { AppState, OverlayState, Settings, ChatMessage, Theme } from "@/types";
@@ -90,6 +90,55 @@ function OverlayBadge({ children, accent }: { children: ReactNode; accent?: bool
   );
 }
 
+function cardVisualStyle(theme: Theme): CSSProperties {
+  const base: CSSProperties = {
+    backgroundColor: theme.backgroundColor,
+    boxShadow: "0 20px 45px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(255, 255, 255, 0.08)",
+    backdropFilter: "blur(10px)",
+    WebkitBackdropFilter: "blur(10px)"
+  };
+
+  switch (theme.stylePreset) {
+    case "clinic-calm":
+      return {
+        ...base,
+        border: "1px solid rgba(20, 184, 166, 0.34)",
+        backgroundImage: "linear-gradient(135deg, rgba(255,255,255,0.96), rgba(204,251,241,0.88))",
+        boxShadow: `0 22px 42px rgba(15, 23, 42, 0.18), 0 0 32px rgba(20, 184, 166, 0.32), inset 0 0 26px rgba(255,255,255,0.68)`
+      };
+    case "warm-pop":
+      return {
+        ...base,
+        border: "2px solid rgba(251, 113, 133, 0.38)",
+        backgroundImage: "radial-gradient(circle at 14% 20%, rgba(251, 113, 133, 0.2), transparent 32%)",
+        boxShadow: "0 18px 38px rgba(154, 52, 18, 0.24)"
+      };
+    case "minimal-broadcast":
+      return {
+        ...base,
+        border: "1px solid rgba(245, 158, 11, 0.42)",
+        backgroundImage: "repeating-linear-gradient(135deg, rgba(255,255,255,0.045) 0 1px, transparent 1px 8px), linear-gradient(180deg, rgba(17,24,39,0.96), rgba(0,0,0,0.94))",
+        boxShadow: `0 0 0 1px rgba(255,255,255,0.08), 0 14px 38px rgba(0,0,0,0.44), 0 0 28px rgba(245,158,11,0.22)`
+      };
+    case "festival-neon":
+      return {
+        ...base,
+        border: `1px solid ${theme.accentColor}`,
+        backgroundImage: "linear-gradient(135deg, rgba(244, 114, 182, 0.14), rgba(56, 189, 248, 0.1))",
+        boxShadow: `0 0 0 1px rgba(255,255,255,0.08), 0 0 26px ${theme.accentColor}, 0 20px 48px rgba(0, 0, 0, 0.34)`
+      };
+    case "comic-pop":
+      return {
+        ...base,
+        border: `5px solid ${theme.accentColor}`,
+        backgroundImage: "radial-gradient(circle at 88% 26%, rgba(37, 99, 235, 0.18) 0 2px, transparent 2px 9px)",
+        boxShadow: `10px 10px 0 rgba(37, 99, 235, 0.34), 0 0 0 3px rgba(15,23,42,0.95), 0 20px 36px rgba(15, 23, 42, 0.22)`
+      };
+    default:
+      return base;
+  }
+}
+
 function OverlayCard({
   message,
   theme,
@@ -104,8 +153,12 @@ function OverlayCard({
   eventName: OverlayEventName;
 }) {
   const cardKey = messageKey(message);
-  const maxCardWidth = Math.min(theme.cardWidth, isCompact ? 680 : 920);
+  const maxCardWidth = Math.min(theme.cardWidth, isCompact ? 760 : theme.stylePreset === "minimal-broadcast" ? 1180 : 920);
   const animationType = theme.animationType;
+  const visualStyle = cardVisualStyle(theme);
+  const isClinic = theme.stylePreset === "clinic-calm";
+  const isMinimal = theme.stylePreset === "minimal-broadcast";
+  const isComic = theme.stylePreset === "comic-pop";
   const initials = message.authorName
     .split(/\s+/)
     .filter(Boolean)
@@ -148,23 +201,73 @@ function OverlayCard({
         damping: 24,
         stiffness: 180
       }}
-      className="pointer-events-none"
+      className="pointer-events-none relative overflow-visible"
       style={{
-        width: "min(100vw - 48px, 920px)",
+        width: isMinimal ? "min(100vw - 80px, 1180px)" : "min(100vw - 48px, 920px)",
         maxWidth: maxCardWidth,
         minWidth: 0,
         color: theme.textColor,
         fontSize: theme.fontSize,
         fontFamily: `${theme.fontFamily}, Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji`,
         borderRadius: theme.borderRadius,
-        backgroundColor: theme.backgroundColor,
-        boxShadow: `0 20px 45px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(255, 255, 255, 0.08)`,
-        backdropFilter: "blur(10px)",
-        WebkitBackdropFilter: "blur(10px)"
+        ...visualStyle
       }}
     >
+      {isClinic ? (
+        <>
+          <div
+            className="absolute bottom-0 left-0 top-0 w-20"
+            style={{
+              background: `linear-gradient(180deg, ${theme.accentColor}, #0f766e)`,
+              borderRadius: `${theme.borderRadius}px 0 0 ${theme.borderRadius}px`
+            }}
+          >
+            <div className="absolute left-1/2 top-1/2 grid h-10 w-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white/18 text-3xl font-black text-white">
+              +
+            </div>
+            <div
+              className="absolute -bottom-5 left-0 h-10 w-20"
+              style={{
+                background: "linear-gradient(135deg, transparent 50%, rgba(13,148,136,0.92) 51%), linear-gradient(225deg, transparent 50%, rgba(20,184,166,0.92) 51%)"
+              }}
+            />
+          </div>
+          <div className="absolute right-8 top-9 h-8 w-32 opacity-80">
+            <div className="absolute left-0 top-1/2 h-0.5 w-full -translate-y-1/2" style={{ background: theme.accentColor }} />
+            <div className="absolute left-10 top-1/2 h-6 w-6 -translate-y-1/2 rotate-45 border-r-2 border-t-2" style={{ borderColor: theme.accentColor }} />
+            <div className="absolute left-20 top-1/2 h-8 w-4 -translate-y-1/2 border-l-2 border-r-2" style={{ borderColor: theme.accentColor }} />
+          </div>
+        </>
+      ) : null}
+      {isMinimal ? (
+        <>
+          <div className="absolute left-0 top-0 h-9 w-52 origin-top-left -skew-x-12" style={{ background: theme.accentColor }} />
+          <div className="absolute bottom-0 right-10 h-full w-14 skew-x-[-24deg]" style={{ background: `linear-gradient(90deg, transparent, ${theme.accentColor})` }} />
+          <div className="absolute bottom-0 left-8 top-12 w-1.5 rounded-full" style={{ background: theme.accentColor, boxShadow: `0 0 16px ${theme.accentColor}` }} />
+          <div className="absolute right-8 top-4 text-[10px] font-black uppercase tracking-[0.2em] text-white/85">LIVE COMMENT</div>
+        </>
+      ) : null}
+      {theme.stylePreset === "festival-neon" ? (
+        <div
+          className="absolute -right-3 -top-3 h-8 w-8 rounded-full"
+          style={{ background: theme.accentColor, boxShadow: `0 0 22px ${theme.accentColor}` }}
+        />
+      ) : null}
+      {theme.stylePreset === "warm-pop" ? (
+        <div className="absolute right-8 top-7 flex gap-1.5">
+          <span className="h-3 w-3 rounded-full" style={{ background: theme.accentColor }} />
+          <span className="h-3 w-3 rounded-full bg-amber-300" />
+          <span className="h-3 w-3 rounded-full bg-sky-300" />
+        </div>
+      ) : null}
+      {isComic ? (
+        <div className="absolute -right-7 top-4 flex rotate-12 gap-2">
+          <span className="h-10 w-3 -rotate-12 rounded-full bg-slate-950" />
+          <span className="h-8 w-3 rotate-12 rounded-full bg-slate-950" />
+        </div>
+      ) : null}
       <div
-        className="flex items-start gap-4 px-6 py-5"
+        className={isMinimal ? "flex items-center gap-4 px-12 pb-5 pt-11" : isClinic ? "flex items-start gap-4 py-6 pl-28 pr-8" : "flex items-start gap-4 px-6 py-5"}
         style={{
           maxHeight: "calc(100vh - 72px)"
         }}
@@ -173,9 +276,10 @@ function OverlayCard({
           <div
             className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden"
             style={{
-              borderRadius: Math.max(10, Math.min(theme.borderRadius - 4, 20)),
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.10)"
+              borderRadius: isComic ? 999 : Math.max(10, Math.min(theme.borderRadius - 4, 20)),
+              background: isClinic ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.08)",
+              border: isComic ? `4px solid ${theme.accentColor}` : isClinic ? `3px solid rgba(20,184,166,0.32)` : "1px solid rgba(255,255,255,0.10)",
+              boxShadow: isClinic ? "0 8px 18px rgba(15, 118, 110, 0.18)" : undefined
             }}
           >
             {message.authorImageUrl ? (
@@ -194,8 +298,17 @@ function OverlayCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             {theme.showAuthorName ? (
-              <h2 className="min-w-0 text-[1.05em] font-semibold leading-tight">
-                <span className="block truncate">{message.authorName}</span>
+              <h2 className={isMinimal ? "min-w-0 text-[0.72em] font-black leading-tight" : "min-w-0 text-[1.05em] font-semibold leading-tight"}>
+                <span
+                  className={isMinimal ? "inline-flex max-w-full -skew-x-12 truncate px-4 py-1 text-slate-950" : "block truncate"}
+                  style={{
+                    background: isMinimal ? theme.accentColor : undefined,
+                    color: isComic ? theme.accentColor : undefined,
+                    borderRadius: isMinimal ? 2 : undefined
+                  }}
+                >
+                  {message.authorName}
+                </span>
               </h2>
             ) : null}
 
@@ -211,7 +324,7 @@ function OverlayCard({
           </div>
 
           <p
-            className="mt-3 whitespace-pre-wrap text-[1em] leading-[1.5] text-left"
+            className={`${isMinimal ? "mt-3 pl-8 text-[1.05em] font-black leading-[1.38]" : isComic ? "mt-4 text-[1.05em] font-black leading-[1.42]" : "mt-3 text-[1em] leading-[1.5]"} whitespace-pre-wrap text-left`}
             style={{
               overflowWrap: "anywhere",
               wordBreak: "normal",
@@ -222,6 +335,17 @@ function OverlayCard({
           </p>
         </div>
       </div>
+      {isComic ? (
+        <div
+          className="absolute -bottom-9 left-[55%] h-16 w-16 rotate-45"
+          style={{
+            background: theme.backgroundColor,
+            borderBottom: `5px solid ${theme.accentColor}`,
+            borderRight: `5px solid ${theme.accentColor}`,
+            boxShadow: "5px 5px 0 rgba(37,99,235,0.3)"
+          }}
+        />
+      ) : null}
     </motion.section>
   );
 }

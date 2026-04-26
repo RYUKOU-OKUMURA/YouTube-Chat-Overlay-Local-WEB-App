@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { Copy, MonitorCog, RefreshCcw, SlidersHorizontal, TestTube2 } from "lucide-react";
 import type { AppState, BroadcastStatus, ChatMessage, Settings, Theme, YouTubeStatus } from "@/types";
-import { socketEvents } from "@/types";
+import { defaultTheme, socketEvents } from "@/types";
 import { Button } from "@/components/common/Button";
 import { Panel } from "@/components/common/Panel";
 import { fetchJson } from "./api";
@@ -35,19 +35,7 @@ const emptyOverlay: AppState["overlay"] = {
   currentMessage: null,
   isPinned: false,
   displayDurationSec: 8,
-  theme: {
-    fontFamily: "Inter, system-ui, sans-serif",
-    fontSize: 28,
-    cardWidth: 760,
-    cardPosition: "bottom-center",
-    borderRadius: 22,
-    showAvatar: true,
-    showAuthorName: true,
-    backgroundColor: "rgba(17, 24, 39, 0.92)",
-    textColor: "#f8fafc",
-    accentColor: "#38bdf8",
-    animationType: "slide-up"
-  }
+  theme: defaultTheme
 };
 
 export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {

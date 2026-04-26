@@ -4,6 +4,14 @@ import { defaultTheme, type ApiErrorCode, type ApiResponse, type Theme } from "@
 const colorSchema = z.string().min(1).max(80);
 
 export const themeSchema = z.object({
+  stylePreset: z.enum([
+    "midnight-glass",
+    "warm-pop",
+    "minimal-broadcast",
+    "festival-neon",
+    "clinic-calm",
+    "comic-pop"
+  ]).default(defaultTheme.stylePreset),
   fontFamily: z.string().min(1).max(120).default(defaultTheme.fontFamily),
   fontSize: z.number().int().min(16).max(64).default(defaultTheme.fontSize),
   cardWidth: z.number().int().min(360).max(1200).default(defaultTheme.cardWidth),
