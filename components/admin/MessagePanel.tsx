@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useMemo, type RefObject, type CSSProperties } from "react";
 import { Copy, Play, Search, ArrowDownToLine } from "lucide-react";
 import type { ChatMessage } from "@/types";
 import { Badge } from "@/components/common/Badge";
@@ -26,6 +26,15 @@ function formatChatTime(value: string) {
   return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+const messagePreviewStyle: CSSProperties = {
+  display: "-webkit-box",
+  overflow: "hidden",
+  overflowWrap: "anywhere",
+  wordBreak: "normal",
+  WebkitBoxOrient: "vertical",
+  WebkitLineClamp: 4
+};
+
 export function MessagePanel({
   messages,
   activeMessageId,
@@ -49,7 +58,7 @@ export function MessagePanel({
   listRef: RefObject<HTMLDivElement | null>;
   filteredCount: number;
 }) {
-  const orderedMessages = [...messages].reverse();
+  const orderedMessages = useMemo(() => [...messages].reverse(), [messages]);
 
   return (
     <Panel
@@ -109,7 +118,9 @@ export function MessagePanel({
                         {message.displayedAt ? <Badge tone="blue" className="border-0 bg-sky-100">表示済み</Badge> : null}
                         {isLatest ? <Badge tone="slate" className="border-0 bg-slate-950 text-white">最新</Badge> : null}
                       </div>
-                      <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-6 text-slate-900">{message.messageText}</p>
+                      <p className="mt-1 whitespace-pre-wrap text-[15px] leading-6 text-slate-900" style={messagePreviewStyle}>
+                        {message.messageText}
+                      </p>
                       {message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
                       <div className="mt-2 flex flex-wrap gap-2 opacity-100 transition lg:opacity-70 lg:group-hover:opacity-100">
                         <Button size="sm" variant="ghost" icon={<Copy className="h-3.5 w-3.5" />} onClick={(event) => { event.stopPropagation(); onCopyMessage(message); }}>

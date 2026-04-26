@@ -1,4 +1,5 @@
 import { Copy, EyeOff, MessageSquareMore } from "lucide-react";
+import type { CSSProperties } from "react";
 import type { OverlayState } from "@/types";
 import { Badge } from "@/components/common/Badge";
 import { Button } from "@/components/common/Button";
@@ -9,6 +10,13 @@ function messageTypeLabel(messageType: string) {
   if (messageType === "textMessageEvent") return "通常コメント";
   return messageType;
 }
+
+const activeMessageTextStyle: CSSProperties = {
+  maxHeight: "10rem",
+  overflow: "hidden",
+  overflowWrap: "anywhere",
+  wordBreak: "normal"
+};
 
 export function OverlayPanel({
   overlay,
@@ -45,7 +53,9 @@ export function OverlayPanel({
               ) : null}
               <div className="min-w-0 flex-1">
                 {overlay.theme.showAuthorName ? <div className="truncate text-sm font-semibold">{active.authorName}</div> : null}
-                <div className="mt-1 whitespace-pre-wrap text-sm leading-5">{active.messageText}</div>
+                <div className="mt-1 whitespace-pre-wrap text-sm leading-5" style={activeMessageTextStyle}>
+                  {active.messageText}
+                </div>
                 <div className="mt-2 text-[11px] opacity-80">
                   {messageTypeLabel(active.messageType)} · {new Date(active.publishedAt).toLocaleTimeString()}{" "}
                   {active.displayedAt ? `· 表示 ${new Date(active.displayedAt).toLocaleTimeString()}` : ""}

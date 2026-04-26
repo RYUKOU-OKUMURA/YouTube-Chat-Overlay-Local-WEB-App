@@ -68,9 +68,9 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
           overlayToken: settings.overlayToken,
           messages,
           overlay: {
-          ...emptyOverlay,
-          displayDurationSec: settings.displayDurationSec,
-          theme: settings.theme
+            ...emptyOverlay,
+            displayDurationSec: settings.displayDurationSec,
+            theme: settings.theme
           },
           youtubeStatus,
           broadcastStatus,
@@ -347,37 +347,37 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
       <div className="mx-auto flex max-w-7xl flex-col gap-4">
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-5 py-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-red-600">配信者用ローカルツール</p>
-              <h1 className="truncate text-2xl font-semibold text-slate-950">YouTubeコメントオーバーレイ管理</h1>
-              <p className="mt-1 text-sm text-slate-600">
-                配信中のコメント操作と、接続・OBS設定をタブで切り替えます。
-              </p>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-red-600">配信者用ローカルツール</p>
+                <h1 className="truncate text-2xl font-semibold text-slate-950">YouTubeコメントオーバーレイ管理</h1>
+                <p className="mt-1 text-sm text-slate-600">
+                  配信中のコメント操作と、接続・OBS設定をタブで切り替えます。
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button icon={<RefreshCcw className="h-4 w-4" />} onClick={syncStatus} variant="ghost">
+                  更新
+                </Button>
+                <Button icon={<TestTube2 className="h-4 w-4" />} onClick={testMessage} disabled={busyAction === "test"}>
+                  テストコメント
+                </Button>
+                <Button variant="ghost" icon={<Copy className="h-4 w-4" />} onClick={copyOverlayUrl}>
+                  OBS URLをコピー
+                </Button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button icon={<RefreshCcw className="h-4 w-4" />} onClick={syncStatus} variant="ghost">
-                更新
-              </Button>
-              <Button icon={<TestTube2 className="h-4 w-4" />} onClick={testMessage} disabled={busyAction === "test"}>
-                テストコメント
-              </Button>
-              <Button variant="ghost" icon={<Copy className="h-4 w-4" />} onClick={copyOverlayUrl}>
-                OBS URLをコピー
-              </Button>
+            <div className="mt-3">
+              <ConnectionStrip
+                socketConnected={socketConnected}
+                overlayConnected={state.overlayConnected}
+                youtubeStatus={state.youtubeStatus}
+                broadcastStatus={state.broadcastStatus}
+                lastSyncLabel={lastSyncLabel}
+                onRefresh={syncStatus}
+              />
             </div>
-          </div>
-          <div className="mt-3">
-            <ConnectionStrip
-              socketConnected={socketConnected}
-              overlayConnected={state.overlayConnected}
-              youtubeStatus={state.youtubeStatus}
-              broadcastStatus={state.broadcastStatus}
-              lastSyncLabel={lastSyncLabel}
-              onRefresh={syncStatus}
-            />
-          </div>
-          {notice ? <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">{notice}</div> : null}
+            {notice ? <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">{notice}</div> : null}
           </div>
           <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-3">
             <button

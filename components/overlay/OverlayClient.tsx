@@ -6,6 +6,9 @@ import { io, type Socket } from "socket.io-client";
 import type { AppState, OverlayState, Settings, ChatMessage, Theme } from "@/types";
 import { socketEvents } from "@/types";
 
+const desktopViewportSize = { width: 1920, height: 1080 };
+const compactBreakpoint = { width: 1600, height: 900 };
+
 type OverlayEventName =
   | "sync"
   | "show"
@@ -61,16 +64,27 @@ function cardPlacement(position: Theme["cardPosition"], padding: number) {
 }
 
 function useViewportSize() {
-  const [size, setSize] = useState({ width: 1920, height: 1080 });
+  const [size, setSize] = useState(desktopViewportSize);
 
   useEffect(() => {
+    let frameId: number | null = null;
+
     const update = () => {
-      setSize({ width: window.innerWidth, height: window.innerHeight });
+      if (frameId) return;
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null;
+        setSize({ width: window.innerWidth, height: window.innerHeight });
+      });
     };
 
     update();
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
   }, []);
 
   return size;
@@ -153,10 +167,17 @@ function OverlayCard({
   const cardKey = messageKey(message);
   const maxCardWidth = Math.min(theme.cardWidth, isCompact ? 760 : theme.stylePreset === "minimal-broadcast" ? 1180 : 920);
   const animationType = theme.animationType;
-  const visualStyle = cardVisualStyle(theme);
+  const visualStyle = useMemo(() => cardVisualStyle(theme), [theme]);
   const isClinic = theme.stylePreset === "clinic-calm";
   const isMinimal = theme.stylePreset === "minimal-broadcast";
   const isComic = theme.stylePreset === "comic-pop";
+  const contentClassName = isMinimal
+    ? "flex items-center gap-4 px-12 pb-5 pt-11"
+    : isClinic
+      ? "flex items-start gap-4 py-6 pl-28 pr-8"
+      : "flex items-start gap-4 px-6 py-5";
+  const messageClassName = `${isMinimal ? "mt-3 pl-8 text-[1.05em] font-black leading-[1.38]" : isComic ? "mt-4 text-[1.05em] font-black leading-[1.42]" : "mt-3 text-[1em] leading-[1.5]"} whitespace-pre-wrap text-left`;
+  const messageLineClamp = isMinimal ? 3 : isCompact ? 5 : 7;
   const initials = message.authorName
     .split(/\s+/)
     .filter(Boolean)
@@ -208,6 +229,7 @@ function OverlayCard({
         fontSize: theme.fontSize,
         fontFamily: `${theme.fontFamily}, Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji`,
         borderRadius: theme.borderRadius,
+        willChange: "opacity, transform",
         ...visualStyle
       }}
     >
@@ -265,9 +287,10 @@ function OverlayCard({
         </div>
       ) : null}
       <div
-        className={isMinimal ? "flex items-center gap-4 px-12 pb-5 pt-11" : isClinic ? "flex items-start gap-4 py-6 pl-28 pr-8" : "flex items-start gap-4 px-6 py-5"}
+        className={contentClassName}
         style={{
-          maxHeight: "calc(100vh - 72px)"
+          maxHeight: isCompact ? "calc(100vh - 48px)" : "calc(100vh - 80px)",
+          overflow: "hidden"
         }}
       >
         {theme.showAvatar ? (
@@ -320,11 +343,15 @@ function OverlayCard({
           </div>
 
           <p
-            className={`${isMinimal ? "mt-3 pl-8 text-[1.05em] font-black leading-[1.38]" : isComic ? "mt-4 text-[1.05em] font-black leading-[1.42]" : "mt-3 text-[1em] leading-[1.5]"} whitespace-pre-wrap text-left`}
+            className={messageClassName}
             style={{
+              display: "-webkit-box",
+              overflow: "hidden",
               overflowWrap: "anywhere",
               wordBreak: "normal",
-              hyphens: "auto"
+              hyphens: "auto",
+              WebkitBoxOrient: "vertical",
+              WebkitLineClamp: messageLineClamp
             }}
           >
             {message.messageText}
@@ -348,7 +375,7 @@ function OverlayCard({
 
 export function OverlayClient({ overlayToken }: OverlayClientProps) {
   const viewport = useViewportSize();
-  const isCompact = viewport.width < 1600 || viewport.height < 900;
+  const isCompact = viewport.width < compactBreakpoint.width || viewport.height < compactBreakpoint.height;
   const [overlayState, setOverlayState] = useState<OverlayState | null>(null);
   const [eventName, setEventName] = useState<OverlayEventName>("sync");
 
