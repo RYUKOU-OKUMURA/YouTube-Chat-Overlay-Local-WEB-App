@@ -142,13 +142,11 @@ function cardVisualStyle(theme: Theme): CSSProperties {
 function OverlayCard({
   message,
   theme,
-  isPinned,
   isCompact,
   eventName,
 }: {
   message: ChatMessage;
   theme: Theme;
-  isPinned: boolean;
   isCompact: boolean;
   eventName: OverlayEventName;
 }) {
@@ -316,10 +314,8 @@ function OverlayCard({
             {message.isModerator ? <OverlayBadge>モデレーター</OverlayBadge> : null}
             {message.isMember ? <OverlayBadge>メンバー</OverlayBadge> : null}
             {message.isSuperChat ? <OverlayBadge accent>{message.amountText ?? "Super Chat"}</OverlayBadge> : null}
-            {isPinned ? <OverlayBadge accent>固定中</OverlayBadge> : null}
             {message.messageType === "testMessage" ? <OverlayBadge accent>テスト</OverlayBadge> : null}
             {eventName === "show" ? <OverlayBadge>表示中</OverlayBadge> : null}
-            {eventName === "pin" ? <OverlayBadge accent>固定</OverlayBadge> : null}
             {eventName === "test" ? <OverlayBadge accent>テスト表示</OverlayBadge> : null}
           </div>
 
@@ -355,7 +351,6 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
   const isCompact = viewport.width < 1600 || viewport.height < 900;
   const [overlayState, setOverlayState] = useState<OverlayState | null>(null);
   const [eventName, setEventName] = useState<OverlayEventName>("sync");
-  const [hiddenMessageKey, setHiddenMessageKey] = useState<string | null>(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -403,7 +398,6 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
     socket.on(socketEvents.overlayHide, (state) => {
       setOverlayState(state);
       setEventName("hide");
-      setHiddenMessageKey(null);
     });
     socket.on(socketEvents.overlayUnpin, (state) => applyOverlayState(state, "unpin"));
     socket.on(socketEvents.overlayTest, (state) => applyOverlayState(state, "test"));
@@ -433,46 +427,11 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
 
   const currentMessage = overlayState?.currentMessage ?? null;
   const currentKey = currentMessage ? messageKey(currentMessage) : null;
-  const displayDurationSec = overlayState?.displayDurationSec;
-  const visibleMessage = currentMessage && currentKey !== hiddenMessageKey ? currentMessage : null;
+  const visibleMessage = currentMessage;
   const placement = useMemo(
     () => cardPlacement(overlayState?.theme.cardPosition ?? "bottom-center", isCompact ? 24 : 40),
     [isCompact, overlayState?.theme.cardPosition]
   );
-
-  useEffect(() => {
-    if (!currentMessage) {
-      setHiddenMessageKey(null);
-      return;
-    }
-
-    setHiddenMessageKey((previous) => (previous === currentKey ? previous : null));
-  }, [currentKey, currentMessage]);
-
-  useEffect(() => {
-    if (!currentMessage || !currentKey || overlayState?.isPinned || displayDurationSec == null) {
-      return;
-    }
-
-    const displayedAt = new Date(currentMessage.displayedAt ?? currentMessage.publishedAt).getTime();
-    const remaining = displayedAt + displayDurationSec * 1000 - Date.now();
-
-    if (remaining <= 0) {
-      setHiddenMessageKey(currentKey);
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setHiddenMessageKey(currentKey);
-    }, remaining);
-
-    return () => window.clearTimeout(timer);
-  }, [
-    currentKey,
-    currentMessage,
-    displayDurationSec,
-    overlayState?.isPinned
-  ]);
 
   return (
     <main className="fixed inset-0 overflow-hidden bg-transparent">
@@ -484,7 +443,6 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
                 key={currentKey ?? visibleMessage.id}
                 message={visibleMessage}
                 theme={overlayState.theme}
-                isPinned={overlayState.isPinned}
                 isCompact={isCompact}
                 eventName={eventName}
               />

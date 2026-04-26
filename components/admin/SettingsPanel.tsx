@@ -1,4 +1,4 @@
-import { Palette, Clock3, Check, Sparkles } from "lucide-react";
+import { Palette, Check, Sparkles } from "lucide-react";
 import type { CSSProperties } from "react";
 import type { Settings, Theme } from "@/types";
 import { Badge } from "@/components/common/Badge";
@@ -77,7 +77,6 @@ function presetCardStyle(preset: (typeof overlayStylePresets)[number], active: b
 }
 
 type SettingsPatch = {
-  displayDurationSec?: number;
   theme?: Partial<Theme>;
   lastBroadcastUrl?: string;
 };
@@ -86,7 +85,7 @@ export function SettingsPanel({
   settings,
   onPatchSettings
 }: {
-  settings: Pick<Settings, "displayDurationSec" | "theme">;
+  settings: Pick<Settings, "theme">;
   onPatchSettings: (patch: SettingsPatch) => void | Promise<void>;
 }) {
   const { theme } = settings;
@@ -143,20 +142,6 @@ export function SettingsPanel({
           </div>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <Field label="表示秒数" hint="固定表示でないコメントが自動で消えるまでの秒数です。">
-            <label className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3">
-              <Clock3 className="h-4 w-4 text-slate-400" />
-              <input
-                type="number"
-                min={3}
-                max={60}
-                value={settings.displayDurationSec}
-                onChange={(event) => onPatchSettings({ displayDurationSec: Number(event.target.value) })}
-                className="w-full bg-transparent text-sm outline-none"
-              />
-              <span className="text-xs text-slate-500">秒</span>
-            </label>
-          </Field>
           <Field label="フォント">
             <select
               value={theme.fontFamily}

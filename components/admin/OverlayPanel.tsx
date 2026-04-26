@@ -1,5 +1,5 @@
-import { Copy, Eye, EyeOff, Pin, PinOff, MessageSquareMore } from "lucide-react";
-import type { ChatMessage, OverlayState } from "@/types";
+import { Copy, EyeOff, MessageSquareMore } from "lucide-react";
+import type { OverlayState } from "@/types";
 import { Badge } from "@/components/common/Badge";
 import { Button } from "@/components/common/Button";
 import { Panel } from "@/components/common/Panel";
@@ -12,30 +12,22 @@ function messageTypeLabel(messageType: string) {
 
 export function OverlayPanel({
   overlay,
-  selectedMessage,
-  onShow,
-  onPin,
   onHide,
-  onUnpin,
   onCopyMessage,
   onCopyOverlayUrl
 }: {
   overlay: OverlayState;
-  selectedMessage: ChatMessage | null;
-  onShow: () => void;
-  onPin: () => void;
   onHide: () => void;
-  onUnpin: () => void;
   onCopyMessage: () => void;
   onCopyOverlayUrl: () => void;
 }) {
-  const active = overlay.currentMessage ?? selectedMessage;
+  const active = overlay.currentMessage;
   return (
     <Panel
       title="現在のOBS表示"
-      subtitle="OBSに出ているコメントと、次に表示するコメントを確認します。"
+      subtitle="OBSに出ているコメントを確認します。"
       className="rounded-2xl bg-slate-50"
-      actions={<Badge tone={overlay.isPinned ? "amber" : "slate"}>{overlay.isPinned ? "固定中" : "通常表示"}</Badge>}
+      actions={<Badge tone={active ? "amber" : "slate"}>{active ? "表示中" : "非表示"}</Badge>}
     >
       <div className="grid gap-3">
         {active ? (
@@ -63,21 +55,12 @@ export function OverlayPanel({
           </div>
         ) : (
           <div className="rounded-xl border border-dashed border-slate-300 px-3 py-4 text-sm text-slate-500">
-            表示中のコメントはありません。コメントを選んで「表示」または「固定」を押してください。
+            表示中のコメントはありません。コメントをクリックするとOBSに表示されます。
           </div>
         )}
         <div className="grid grid-cols-2 gap-2">
-          <Button className="bg-red-600 hover:bg-red-500" icon={<Eye className="h-4 w-4" />} onClick={onShow} disabled={!active}>
-            表示
-          </Button>
-          <Button className="bg-slate-950 hover:bg-slate-800" icon={<Pin className="h-4 w-4" />} onClick={onPin} disabled={!active}>
-            固定
-          </Button>
           <Button variant="ghost" icon={<EyeOff className="h-4 w-4" />} onClick={onHide}>
             非表示
-          </Button>
-          <Button variant="ghost" icon={<PinOff className="h-4 w-4" />} onClick={onUnpin}>
-            固定解除
           </Button>
           <Button variant="ghost" icon={<Copy className="h-4 w-4" />} onClick={onCopyMessage} disabled={!active}>
             コメントをコピー
@@ -87,7 +70,6 @@ export function OverlayPanel({
           </Button>
         </div>
         <div className="grid gap-1 text-xs text-slate-600">
-          <div>表示秒数: {overlay.displayDurationSec}秒</div>
           <div>テーマ: {overlay.theme.fontFamily} · {overlay.theme.animationType}</div>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { Check, Copy, Pin, Play, Search, ArrowDownToLine } from "lucide-react";
+import { Copy, Play, Search, ArrowDownToLine } from "lucide-react";
 import type { ChatMessage } from "@/types";
 import { Badge } from "@/components/common/Badge";
 import { Button } from "@/components/common/Button";
@@ -28,27 +28,23 @@ function formatChatTime(value: string) {
 
 export function MessagePanel({
   messages,
-  selectedMessageId,
+  activeMessageId,
   search,
   setSearch,
   autoscroll,
   setAutoscroll,
-  onSelectMessage,
   onShowMessage,
-  onPinMessage,
   onCopyMessage,
   listRef,
   filteredCount
 }: {
   messages: ChatMessage[];
-  selectedMessageId: string | null;
+  activeMessageId: string | null;
   search: string;
   setSearch: (value: string) => void;
   autoscroll: boolean;
   setAutoscroll: (value: boolean) => void;
-  onSelectMessage: (message: ChatMessage) => void;
   onShowMessage: (message: ChatMessage) => void;
-  onPinMessage: (message: ChatMessage) => void;
   onCopyMessage: (message: ChatMessage) => void;
   listRef: RefObject<HTMLDivElement | null>;
   filteredCount: number;
@@ -83,15 +79,15 @@ export function MessagePanel({
           <div className="px-2 py-3">
             {orderedMessages.length ? (
               orderedMessages.map((message, index) => {
-                const selected = message.id === selectedMessageId;
+                const active = message.id === activeMessageId;
                 const isLatest = index === orderedMessages.length - 1;
                 return (
                   <article
                     key={message.id}
                     className={`group grid cursor-pointer grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-xl border-l-4 px-3 py-3 transition ${
-                      selected ? "border-red-600 bg-red-50/70" : "border-transparent hover:bg-slate-50"
+                      active ? "border-red-600 bg-red-50/70" : "border-transparent hover:bg-slate-50"
                     }`}
-                    onClick={() => onSelectMessage(message)}
+                    onClick={() => onShowMessage(message)}
                   >
                     {message.authorImageUrl ? (
                       <img src={message.authorImageUrl} alt="" className="mt-0.5 h-9 w-9 rounded-full object-cover" />
@@ -109,18 +105,13 @@ export function MessagePanel({
                         <span className="max-w-[16rem] truncate text-sm font-semibold text-slate-900">{message.authorName}</span>
                         <span className="text-[11px] text-slate-500">{formatChatTime(message.publishedAt)}</span>
                         <span className="text-[11px] text-slate-500">{formatMessageMeta(message)}</span>
+                        {active ? <Badge tone="amber" className="border-0 bg-amber-100">表示中</Badge> : null}
                         {message.displayedAt ? <Badge tone="blue" className="border-0 bg-sky-100">表示済み</Badge> : null}
                         {isLatest ? <Badge tone="slate" className="border-0 bg-slate-950 text-white">最新</Badge> : null}
                       </div>
                       <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-6 text-slate-900">{message.messageText}</p>
                       {message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
                       <div className="mt-2 flex flex-wrap gap-2 opacity-100 transition lg:opacity-70 lg:group-hover:opacity-100">
-                        <Button size="sm" className="bg-slate-950 hover:bg-slate-800" icon={<Check className="h-3.5 w-3.5" />} onClick={(event) => { event.stopPropagation(); onShowMessage(message); }}>
-                          表示
-                        </Button>
-                        <Button size="sm" variant="secondary" icon={<Pin className="h-3.5 w-3.5" />} onClick={(event) => { event.stopPropagation(); onPinMessage(message); }}>
-                          固定
-                        </Button>
                         <Button size="sm" variant="ghost" icon={<Copy className="h-3.5 w-3.5" />} onClick={(event) => { event.stopPropagation(); onCopyMessage(message); }}>
                           コピー
                         </Button>

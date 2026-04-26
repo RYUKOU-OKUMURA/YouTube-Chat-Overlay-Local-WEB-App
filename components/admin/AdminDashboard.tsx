@@ -46,7 +46,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   const [broadcastUrl, setBroadcastUrl] = useState("");
   const [search, setSearch] = useState("");
   const [autoscroll, setAutoscroll] = useState(true);
-  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -79,7 +78,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
           lastBroadcastUrl: settings.lastBroadcastUrl
         });
         setBroadcastUrl(settings.lastBroadcastUrl ?? "");
-        setSelectedMessageId(messages[0]?.id ?? null);
       } catch (error) {
         setNotice(error instanceof Error ? error.message : "管理画面の状態を読み込めませんでした。");
       }
@@ -141,12 +139,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
     listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
   }, [autoscroll, state?.messages.length, search]);
 
-  useEffect(() => {
-    if (!selectedMessageId && state?.messages.length) {
-      setSelectedMessageId(state.overlay.currentMessage?.id ?? state.messages[0]?.id ?? null);
-    }
-  }, [selectedMessageId, state]);
-
   const filteredMessages = useMemo(() => {
     const query = search.trim().toLowerCase();
     const items = state?.messages ?? [];
@@ -165,12 +157,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
       return haystack.includes(query);
     });
   }, [search, state?.messages]);
-
-  const selectedMessage = useMemo(() => {
-    if (!state) return null;
-    const current = state.messages.find((message) => message.id === selectedMessageId);
-    return current ?? state.overlay.currentMessage ?? state.messages[0] ?? null;
-  }, [selectedMessageId, state]);
 
   async function syncStatus() {
     try {
@@ -289,7 +275,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
             }
           : prev
       );
-      setSelectedMessageId(result.message.id);
       setNotice("テストコメントを送信しました。");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "テストコメントを送信できませんでした。");
@@ -313,34 +298,9 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
             }
           : prev
       );
-      setSelectedMessageId(message.id);
       setNotice("コメントを表示しました。");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "コメントを表示できませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function pinMessage(message: ChatMessage) {
-    setBusyAction(`pin-${message.id}`);
-    try {
-      const next = await fetchJson<AppState["overlay"]>(`/api/messages/${message.id}/pin`, { method: "POST" });
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              messages: prev.messages.map((item) =>
-                item.id === message.id ? { ...item, displayedAt: next.currentMessage?.displayedAt ?? new Date().toISOString() } : item
-              ),
-              overlay: next
-            }
-          : prev
-      );
-      setSelectedMessageId(message.id);
-      setNotice("コメントを固定表示しました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "コメントを固定できませんでした。");
     } finally {
       setBusyAction(null);
     }
@@ -354,19 +314,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
       setNotice("OBS表示を非表示にしました。");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "OBS表示を非表示にできませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function unpinOverlay() {
-    setBusyAction("unpin");
-    try {
-      const next = await fetchJson<AppState["overlay"]>("/api/overlay/unpin", { method: "POST" });
-      setState((prev) => (prev ? { ...prev, overlay: next } : prev));
-      setNotice("固定表示を解除しました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "固定表示を解除できませんでした。");
     } finally {
       setBusyAction(null);
     }
@@ -464,31 +411,21 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
             <MessagePanel
               messages={filteredMessages}
-              selectedMessageId={selectedMessageId}
+              activeMessageId={state.overlay.currentMessage?.id ?? null}
               search={search}
               setSearch={setSearch}
               autoscroll={autoscroll}
               setAutoscroll={setAutoscroll}
-              onSelectMessage={(message) => setSelectedMessageId(message.id)}
               onShowMessage={showMessage}
-              onPinMessage={pinMessage}
               onCopyMessage={copyMessage}
               listRef={listRef}
               filteredCount={filteredMessages.length}
             />
             <OverlayPanel
               overlay={state.overlay}
-              selectedMessage={selectedMessage}
-              onShow={() => {
-                if (selectedMessage) void showMessage(selectedMessage);
-              }}
-              onPin={() => {
-                if (selectedMessage) void pinMessage(selectedMessage);
-              }}
               onHide={hideOverlay}
-              onUnpin={unpinOverlay}
               onCopyMessage={() => {
-                if (selectedMessage) void copyMessage(selectedMessage);
+                if (state.overlay.currentMessage) void copyMessage(state.overlay.currentMessage);
               }}
               onCopyOverlayUrl={copyOverlayUrl}
             />
@@ -508,23 +445,15 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               />
               <OverlayPanel
                 overlay={state.overlay}
-                selectedMessage={selectedMessage}
-                onShow={() => {
-                  if (selectedMessage) void showMessage(selectedMessage);
-                }}
-                onPin={() => {
-                  if (selectedMessage) void pinMessage(selectedMessage);
-                }}
                 onHide={hideOverlay}
-                onUnpin={unpinOverlay}
                 onCopyMessage={() => {
-                  if (selectedMessage) void copyMessage(selectedMessage);
+                  if (state.overlay.currentMessage) void copyMessage(state.overlay.currentMessage);
                 }}
                 onCopyOverlayUrl={copyOverlayUrl}
               />
             </div>
             <SettingsPanel
-              settings={{ displayDurationSec: state.overlay.displayDurationSec, theme: state.overlay.theme }}
+              settings={{ theme: state.overlay.theme }}
               onPatchSettings={patchSettings}
             />
           </div>
