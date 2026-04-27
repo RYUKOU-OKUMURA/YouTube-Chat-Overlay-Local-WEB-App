@@ -33,9 +33,10 @@ export async function exchangeCode(code: string) {
   if (!tokens.access_token) {
     throw new Error("Google OAuth did not return an access token.");
   }
+  const current = await readYouTubeToken();
   await writeYouTubeToken({
     accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token ?? undefined,
+    refreshToken: tokens.refresh_token ?? current?.refreshToken ?? undefined,
     expiryDate: tokens.expiry_date ?? undefined
   });
 }
@@ -69,14 +70,21 @@ export async function getYouTubeStatus(): Promise<YouTubeStatus> {
   try {
     getOAuthEnv();
     const token = await readYouTubeToken();
+    const hasRefreshToken = Boolean(token?.refreshToken);
     return {
       oauth: token ? "authorized" : "unauthorized",
-      api: token ? "connected" : "disconnected"
+      api: token ? "connected" : "disconnected",
+      hasRefreshToken,
+      accessTokenExpiresAt: typeof token?.expiryDate === "number" ? new Date(token.expiryDate).toISOString() : undefined,
+      needsReconnect: Boolean(token && !hasRefreshToken)
     };
   } catch (error) {
     return {
       oauth: "unauthorized",
       api: "error",
+      hasRefreshToken: false,
+      accessTokenExpiresAt: undefined,
+      needsReconnect: false,
       reason: error instanceof Error ? error.message : "OAuth configuration failed."
     };
   }

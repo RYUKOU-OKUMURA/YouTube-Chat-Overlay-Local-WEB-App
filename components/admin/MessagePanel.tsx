@@ -5,6 +5,8 @@ import { Badge } from "@/components/common/Badge";
 import { Button } from "@/components/common/Button";
 import { Panel } from "@/components/common/Panel";
 
+export type CommentView = "all" | "undisplayed" | "important";
+
 function formatMessageMeta(message: ChatMessage) {
   const tags = [
     message.isOwner ? "配信者" : null,
@@ -40,18 +42,24 @@ export function MessagePanel({
   activeMessageId,
   search,
   setSearch,
+  commentView,
+  setCommentView,
   autoscroll,
   setAutoscroll,
   onShowMessage,
   onCopyMessage,
   busyAction,
   listRef,
-  filteredCount
+  filteredCount,
+  undisplayedCount,
+  viewCounts
 }: {
   messages: ChatMessage[];
   activeMessageId: string | null;
   search: string;
   setSearch: (value: string) => void;
+  commentView: CommentView;
+  setCommentView: (value: CommentView) => void;
   autoscroll: boolean;
   setAutoscroll: (value: boolean) => void;
   onShowMessage: (message: ChatMessage) => void;
@@ -59,8 +67,15 @@ export function MessagePanel({
   busyAction: string | null;
   listRef: RefObject<HTMLDivElement | null>;
   filteredCount: number;
+  undisplayedCount: number;
+  viewCounts: Record<CommentView, number>;
 }) {
   const orderedMessages = useMemo(() => [...messages].reverse(), [messages]);
+  const viewOptions: Array<{ value: CommentView; label: string }> = [
+    { value: "all", label: "すべて" },
+    { value: "undisplayed", label: "未表示" },
+    { value: "important", label: "重要" }
+  ];
 
   return (
     <Panel
@@ -69,7 +84,8 @@ export function MessagePanel({
       className="overflow-hidden rounded-2xl"
       actions={
         <div className="flex items-center gap-2">
-          <Badge tone="slate">{String(filteredCount)}件</Badge>
+          <Badge tone="slate">{`現在 ${filteredCount}件`}</Badge>
+          <Badge tone={undisplayedCount > 0 ? "amber" : "slate"}>{`未表示 ${undisplayedCount}件`}</Badge>
           <Button size="sm" variant={autoscroll ? "primary" : "ghost"} icon={<ArrowDownToLine className="h-3.5 w-3.5" />} onClick={() => setAutoscroll(!autoscroll)}>
             最新へ追従
           </Button>
@@ -86,6 +102,26 @@ export function MessagePanel({
             className="w-full bg-transparent text-sm outline-none"
           />
         </label>
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2">
+          {viewOptions.map((option) => {
+            const active = commentView === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setCommentView(option.value)}
+                className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition ${
+                  active
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                <span>{option.label}</span>
+                <span className={active ? "text-slate-200" : "text-slate-500"}>{viewCounts[option.value]}</span>
+              </button>
+            );
+          })}
+        </div>
         <div ref={listRef} className="min-h-[34rem] max-h-[calc(100vh-17rem)] overflow-auto bg-white">
           <div className="px-2 py-3">
             {orderedMessages.length ? (

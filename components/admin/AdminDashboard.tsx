@@ -12,7 +12,7 @@ import { ConnectionStrip } from "./ConnectionStrip";
 import { OAuthPanel } from "./OAuthPanel";
 import { BroadcastPanel } from "./BroadcastPanel";
 import { OverlayPanel } from "./OverlayPanel";
-import { MessagePanel } from "./MessagePanel";
+import { MessagePanel, type CommentView } from "./MessagePanel";
 import { SettingsPanel } from "./SettingsPanel";
 
 type DashboardState = {
@@ -35,6 +35,10 @@ const emptyOverlay: AppState["overlay"] = {
   theme: defaultTheme
 };
 
+function isImportantMessage(message: ChatMessage) {
+  return message.isSuperChat || message.isMember || message.isModerator || message.isOwner;
+}
+
 export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   const [state, setState] = useState<DashboardState | null>(null);
   const [activeView, setActiveView] = useState<"control" | "admin">("control");
@@ -42,6 +46,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   const [notice, setNotice] = useState(initialNotice);
   const [broadcastUrl, setBroadcastUrl] = useState("");
   const [search, setSearch] = useState("");
+  const [commentView, setCommentView] = useState<CommentView>("all");
   const [autoscroll, setAutoscroll] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
@@ -133,9 +138,9 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   useEffect(() => {
     if (!autoscroll || !listRef.current) return;
     listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [autoscroll, state?.messages.length, search]);
+  }, [autoscroll, state?.messages.length, search, commentView]);
 
-  const filteredMessages = useMemo(() => {
+  const searchMatchedMessages = useMemo(() => {
     const query = search.trim().toLowerCase();
     const items = state?.messages ?? [];
     if (!query) return items;
@@ -153,6 +158,25 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
       return haystack.includes(query);
     });
   }, [search, state?.messages]);
+
+  const viewCounts = useMemo(
+    () => ({
+      all: searchMatchedMessages.length,
+      undisplayed: searchMatchedMessages.filter((message) => !message.displayedAt).length,
+      important: searchMatchedMessages.filter(isImportantMessage).length
+    }),
+    [searchMatchedMessages]
+  );
+
+  const filteredMessages = useMemo(() => {
+    if (commentView === "undisplayed") {
+      return searchMatchedMessages.filter((message) => !message.displayedAt);
+    }
+    if (commentView === "important") {
+      return searchMatchedMessages.filter(isImportantMessage);
+    }
+    return searchMatchedMessages;
+  }, [commentView, searchMatchedMessages]);
 
   async function syncStatus() {
     try {
@@ -425,6 +449,8 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               activeMessageId={state.overlay.currentMessage?.id ?? null}
               search={search}
               setSearch={setSearch}
+              commentView={commentView}
+              setCommentView={setCommentView}
               autoscroll={autoscroll}
               setAutoscroll={setAutoscroll}
               onShowMessage={showMessage}
@@ -432,6 +458,8 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               busyAction={busyAction}
               listRef={listRef}
               filteredCount={filteredMessages.length}
+              undisplayedCount={viewCounts.undisplayed}
+              viewCounts={viewCounts}
             />
             <OverlayPanel
               overlay={state.overlay}

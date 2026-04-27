@@ -40,8 +40,11 @@ class TypedEmitter extends EventEmitter {
 }
 
 const maxMessages = 300;
-const initialReconnectDelayMs = 1000;
+const initialReconnectDelayMs = 2000;
 const maxReconnectDelayMs = 60000;
+const maxReconnectAttempts = 8;
+const maxShortStreamCloses = 5;
+const shortStreamCloseMs = 5000;
 
 export class AppController {
   readonly events = new TypedEmitter();
@@ -54,7 +57,11 @@ export class AppController {
   private streamAbortController: AbortController | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private streamGeneration = 0;
+  private startRequestGeneration = 0;
+  private startQueue: Promise<unknown> = Promise.resolve();
+  private startInFlight: { videoId: string; generation: number; promise: Promise<BroadcastStatus> } | null = null;
   private reconnectDelayMs = initialReconnectDelayMs;
+  private shortStreamCloseCount = 0;
   private broadcastStatus: BroadcastStatus = { isFetchingComments: false };
   private youtubeStatus: YouTubeStatus = { oauth: "unauthorized", api: "disconnected" };
   private overlayConnected = false;
@@ -106,17 +113,69 @@ export class AppController {
       throw new Error("YouTube videoId could not be extracted from the URL.");
     }
 
+    if (this.isActiveBroadcastFor(videoId)) {
+      return this.broadcastStatus;
+    }
+
+    if (
+      this.startInFlight?.videoId === videoId &&
+      this.startInFlight.generation === this.startRequestGeneration
+    ) {
+      return this.startInFlight.promise;
+    }
+
+    const requestGeneration = ++this.startRequestGeneration;
+    const previousStart = this.startQueue;
+    const startPromise = (async () => {
+      await previousStart.catch(() => undefined);
+
+      if (requestGeneration !== this.startRequestGeneration) {
+        return this.broadcastStatus;
+      }
+
+      if (this.isActiveBroadcastFor(videoId)) {
+        return this.broadcastStatus;
+      }
+
+      return this.startBroadcastNow(input, videoId, requestGeneration);
+    })();
+    this.startQueue = startPromise.catch(() => undefined);
+    this.startInFlight = { videoId, generation: requestGeneration, promise: startPromise };
+
+    try {
+      return await startPromise;
+    } finally {
+      if (this.startInFlight?.generation === requestGeneration) {
+        this.startInFlight = null;
+      }
+    }
+  }
+
+  private async startBroadcastNow(input: StartBroadcastInput, videoId: string, requestGeneration: number) {
     const info = await getLiveChatInfo(videoId);
+    if (requestGeneration !== this.startRequestGeneration) {
+      return this.broadcastStatus;
+    }
+
+    const nextSettings = await patchSettings({ lastBroadcastUrl: input.broadcastUrl });
+    if (requestGeneration !== this.startRequestGeneration) {
+      return this.broadcastStatus;
+    }
+
     const generation = this.resetActiveStream();
     this.nextPageToken = undefined;
     this.reconnectDelayMs = initialReconnectDelayMs;
+    this.shortStreamCloseCount = 0;
     this.fetchedMessageIds.clear();
     this.messages = [];
-    this.settings = await patchSettings({ lastBroadcastUrl: input.broadcastUrl });
+    this.settings = nextSettings;
     this.broadcastStatus = {
       isFetchingComments: true,
       connectionMode: "stream",
       connectionState: "connecting",
+      reconnectAttempt: 0,
+      maxReconnectAttempts,
+      nextReconnectAt: undefined,
       currentBroadcastUrl: input.broadcastUrl,
       currentVideoId: info.videoId,
       liveChatId: info.liveChatId,
@@ -132,6 +191,7 @@ export class AppController {
 
   async stopBroadcast() {
     await this.init();
+    this.startRequestGeneration += 1;
     this.resetActiveStream();
     this.broadcastStatus = {
       ...this.broadcastStatus,
@@ -241,6 +301,8 @@ export class AppController {
 
     const abortController = new AbortController();
     this.streamAbortController = abortController;
+    const streamStartedAt = Date.now();
+    let receivedBatch = false;
 
     try {
       for await (const batch of streamLiveChatMessages({
@@ -252,8 +314,10 @@ export class AppController {
           return;
         }
 
+        receivedBatch = true;
         this.nextPageToken = batch.nextPageToken ?? this.nextPageToken;
         this.reconnectDelayMs = initialReconnectDelayMs;
+        this.shortStreamCloseCount = 0;
         this.ingestMessages(batch.messages);
 
         const now = new Date().toISOString();
@@ -263,6 +327,9 @@ export class AppController {
           isFetchingComments: !ended,
           connectionMode: "stream",
           connectionState: ended ? "ended" : "connected",
+          reconnectAttempt: 0,
+          maxReconnectAttempts,
+          nextReconnectAt: undefined,
           lastFetchedAt: now,
           lastReceivedAt: now,
           error: undefined
@@ -278,6 +345,10 @@ export class AppController {
 
       if (this.isCurrentStream(generation) && !abortController.signal.aborted) {
         this.clearCurrentAbortController(abortController);
+        if (this.registerShortStreamClose(receivedBatch, streamStartedAt)) {
+          await this.stopForStreamError("Live chat stream closed too quickly too many times.");
+          return;
+        }
         await this.scheduleStreamReconnect(generation);
       }
     } catch (error) {
@@ -309,13 +380,23 @@ export class AppController {
       return;
     }
 
+    const reconnectAttempt = (this.broadcastStatus.reconnectAttempt ?? 0) + 1;
+    if (reconnectAttempt > maxReconnectAttempts) {
+      await this.stopForStreamError("Live chat stream could not reconnect.");
+      return;
+    }
+
     const delay = this.reconnectDelayMs;
     this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, maxReconnectDelayMs);
+    const nextReconnectAt = new Date(Date.now() + delay).toISOString();
     this.broadcastStatus = {
       ...this.broadcastStatus,
       isFetchingComments: true,
       connectionMode: "stream",
       connectionState: "reconnecting",
+      reconnectAttempt,
+      maxReconnectAttempts,
+      nextReconnectAt,
       error: undefined
     };
     this.events.emit("broadcast:status", this.broadcastStatus);
@@ -333,9 +414,44 @@ export class AppController {
         continue;
       }
       this.fetchedMessageIds.add(message.platformMessageId);
-      this.messages = [message, ...this.messages].slice(0, maxMessages);
+      this.messages = this.prioritizeRetainedMessages([message, ...this.messages]);
       this.events.emit("comment:new", message);
     }
+  }
+
+  private prioritizeRetainedMessages(messages: ChatMessage[]) {
+    if (messages.length <= maxMessages) {
+      return messages;
+    }
+
+    const retainedIndexes = new Set(
+      messages
+        .map((message, index) => ({ index, priority: this.retentionPriority(message) }))
+        .sort((left, right) => left.priority - right.priority || left.index - right.index)
+        .slice(0, maxMessages)
+        .map(({ index }) => index)
+    );
+
+    return messages.filter((_, index) => retainedIndexes.has(index));
+  }
+
+  private retentionPriority(message: ChatMessage) {
+    const displayed = Boolean(message.displayedAt);
+    const important = message.isSuperChat || message.isOwner || message.isModerator || message.isMember;
+
+    if (!displayed && message.isSuperChat) {
+      return 0;
+    }
+
+    if (!displayed && (message.isOwner || message.isModerator || message.isMember)) {
+      return 1;
+    }
+
+    if (!displayed) {
+      return 2;
+    }
+
+    return important ? 3 : 4;
   }
 
   private findMessage(messageId: string) {
@@ -368,6 +484,40 @@ export class AppController {
     }
 
     return this.streamGeneration;
+  }
+
+  private isActiveBroadcastFor(videoId: string) {
+    return (
+      this.broadcastStatus.currentVideoId === videoId &&
+      (this.broadcastStatus.isFetchingComments ||
+        this.broadcastStatus.connectionState === "connecting" ||
+        this.broadcastStatus.connectionState === "connected" ||
+        this.broadcastStatus.connectionState === "reconnecting")
+    );
+  }
+
+  private registerShortStreamClose(receivedBatch: boolean, streamStartedAt: number) {
+    if (receivedBatch || Date.now() - streamStartedAt >= shortStreamCloseMs) {
+      this.shortStreamCloseCount = 0;
+      return false;
+    }
+
+    this.shortStreamCloseCount += 1;
+    return this.shortStreamCloseCount >= maxShortStreamCloses;
+  }
+
+  private async stopForStreamError(error: string) {
+    this.resetActiveStream();
+    this.broadcastStatus = {
+      ...this.broadcastStatus,
+      isFetchingComments: false,
+      connectionMode: "stream",
+      connectionState: "error",
+      nextReconnectAt: undefined,
+      error
+    };
+    this.events.emit("broadcast:status", this.broadcastStatus);
+    await this.emitSync();
   }
 
   private isCurrentStream(generation: number) {

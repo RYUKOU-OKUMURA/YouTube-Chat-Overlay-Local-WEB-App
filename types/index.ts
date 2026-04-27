@@ -41,6 +41,9 @@ export type OverlayState = {
 export type YouTubeStatus = {
   oauth: "authorized" | "unauthorized";
   api: "connected" | "disconnected" | "error";
+  hasRefreshToken?: boolean;
+  accessTokenExpiresAt?: string;
+  needsReconnect?: boolean;
   reason?: string;
 };
 
@@ -53,6 +56,9 @@ export type BroadcastStatus = {
   channelName?: string;
   connectionMode?: "stream";
   connectionState?: "connecting" | "connected" | "reconnecting" | "stopped" | "ended" | "error";
+  reconnectAttempt?: number;
+  maxReconnectAttempts?: number;
+  nextReconnectAt?: string;
   lastFetchedAt?: string;
   lastReceivedAt?: string;
   error?: string;

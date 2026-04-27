@@ -1,335 +1,417 @@
 # 要件定義
 # YouTube Chat Overlay Local WEB App v1.0
 
+更新日: 2026-04-27
+
+このドキュメントは、現在の実装に合わせた現状仕様です。初期案に含まれていた polling、pin/unpin、表示秒数、自動消去などは現行仕様から外れています。
+
 ## 1. プロダクト概要
 
-YouTubeライブ配信中のコメントをYouTube APIで取得し、配信者が選択したコメントをOBS画面上にポップアップ表示できるローカル利用向けWEBアプリを作る。
+YouTube Live のコメントを取得し、配信者が管理画面で選んだコメントだけを OBS Browser Source に表示するローカル専用 Web アプリ。
 
-OBS側には専用のオーバーレイURLをBrowser Sourceとして追加する。
-配信者は管理画面からコメントを確認し、任意のコメントを表示・非表示できる。
-
-本アプリは個人利用を前提とし、DB、本格ログイン、SaaS向けユーザー管理、コメント履歴保存は行わない。
+管理画面、API、Socket.IO、OBS オーバーレイを1つのローカルアプリとして動かす。DB、ログイン、SaaS 向けユーザー管理、コメント履歴保存は持たない。
 
 ## 2. 目的
 
-- YouTubeライブ配信中の視聴者コメントをOBS上にわかりやすく表示する
+- YouTube Live の視聴者コメントを配信画面上に読みやすく表示する
 - 配信者が手動で「出したいコメント」だけを選べるようにする
-- OBS Browser Sourceで透明背景のコメントカードを表示する
-- 簡易テーマを管理画面から調整できるようにする
-- ローカル環境で軽く動く個人用ツールとして完成させる
+- OBS Browser Source で透明背景のコメントカードを表示する
+- Super Chat を通常コメントより強く視認できるカードで表示する
+- 配信中でもテーマや表示位置を調整できるようにする
+- 個人利用のローカルツールとして軽く動かす
 
-## 3. MVPの対象範囲
+## 3. 対象範囲
 
 ### 対象に含める
 
-- YouTubeライブ配信URLの入力
-- URLからvideoIdを抽出
-- YouTube APIによる配信情報取得
-- liveChatIdの取得
-- YouTubeライブコメントのリアルタイム取得
+- YouTube OAuth 接続
+- OAuth トークンのローカル保存
+- YouTube Live URL 入力
+- URL から videoId 抽出
+- YouTube Data API による配信情報取得
+- activeLiveChatId の取得
+- `liveChat.messages.stream` によるライブチャット取得
+- stream の再接続
 - コメント一覧表示
-- コメントの手動表示
+- コメント検索
+- 最新コメント追従 ON/OFF
+- コメントカードクリック表示
+- コメントの「表示」ボタン
+- コメントの「コピー」ボタン
+- 現在表示中コメントの確認
 - コメントの非表示
-- 簡易テーマ設定
-- OBS用オーバーレイURLの発行
-- 透明背景のOBSオーバーレイ表示
-- コメントカードのアニメーション表示
+- 表示済みラベル
+- メンバー、モデレーター、配信者、Super Chat の区別
 - テストコメント送信
-- 接続状態の表示
-- YouTube OAuthの初回認可
-- OAuthトークンのローカル保存
+- テストスパチャ送信
+- OBS 用 overlay URL の発行とコピー
+- 透明背景の OBS オーバーレイ
+- 通常コメントカード表示
+- Super Chat 専用カード表示
+- CSS/Framer Motion による表示アニメーション
+- テーマプリセット
+- フォント、文字サイズ、カード幅、位置、角丸、色、アニメーション、アイコン表示、投稿者名表示の調整
+- 長文コメント向けの文字サイズ自動調整
+- 接続状態表示
+- Socket.IO による状態同期
 
 ### 対象に含めない
 
-- DB保存
-- コメント履歴保存
+- DB 保存
+- コメント履歴の永続保存
 - ユーザーアカウント管理
-- 本格ログイン画面
+- 本格ログイン
+- 管理トークン
 - 複数ユーザー対応
-- 複数モデレーター管理
-- SaaS向け権限管理
-- 課金機能
-- Twitch対応
-- TikTok Live対応
-- ニコ生対応
-- Chrome拡張機能
-- OBSネイティブプラグイン
-- AIコメント要約
+- 複数モデレーター権限
+- SaaS 向け権限管理
+- 課金
+- Twitch、TikTok Live、ニコ生などの他プラットフォーム対応
+- Chrome 拡張
+- OBS ネイティブプラグイン
+- AI コメント要約
 - コメント読み上げ
-- Super Chat専用演出
+- 自動コメント表示
+- pin/unpin
+- 表示秒数による自動消去
 - 配信アーカイブ分析
 
 ## 4. 想定ユーザー
 
-- YouTubeライブ配信者本人
-- OBSを使って配信している個人クリエイター
-- ローカルPC上でコメント表示ツールを動かしたい配信者
+- YouTube Live 配信者本人
+- OBS を使って配信している個人クリエイター
+- 配信 PC 上でローカルツールとしてコメント表示を制御したい人
 
-## 5. 基本ユーザーフロー
+## 5. 基本フロー
 
 ### 初回セットアップ
 
-1. ユーザーがローカルWEBアプリを起動する
-2. 管理画面を開く
-3. 必要に応じてYouTube OAuth認可を行う
-4. YouTubeライブ配信URLを入力する
-5. アプリがvideoIdを抽出する
-6. YouTube APIでliveChatIdを取得する
-7. コメント取得を開始する
-8. OBS用オーバーレイURLをコピーする
-9. OBSのBrowser SourceにURLを追加する
-10. テストコメントを表示して動作確認する
+1. ユーザーが依存関係をインストールする。
+2. `.env.local` に Google OAuth クライアント情報を設定する。
+3. アプリを `localhost:3000` で起動する。
+4. 管理画面 `/admin` を開く。
+5. YouTube OAuth に接続する。
+6. OBS 用 overlay URL をコピーする。
+7. OBS Browser Source に overlay URL を設定する。
+8. テストコメントまたはテストスパチャで表示を確認する。
 
-### 配信中の操作
+### 配信中
 
-1. 管理画面にコメントがリアルタイム表示される
-2. 配信者が表示したいコメントを選ぶ
-3. コメントカードまたは「表示」ボタンを押す
-4. OBSオーバーレイにコメントカードが表示される
-5. 表示したコメントは次の表示または「非表示」まで残る
-6. 必要に応じて「非表示」を実行する
+1. 管理画面に YouTube Live URL を入力する。
+2. 「開始」を押す。
+3. アプリが videoId を抽出し、YouTube API で liveChatId を取得する。
+4. アプリが `liveChat.messages.stream` でコメント取得を開始する。
+5. 新着コメントが管理画面の一覧に追加される。
+6. 配信者が表示したいコメントをクリック、または「表示」を押す。
+7. OBS オーバーレイにコメントカードが表示される。
+8. 表示したコメントは次の表示または「非表示」まで残る。
+9. 配信後、必要に応じて「停止」を押す。
 
 ## 6. 画面要件
 
-## 6.1 管理画面
+### 6.1 管理画面
 
 URL:
-- /
-- /admin
 
-機能:
-- YouTubeライブ配信URL入力
-- YouTube OAuth接続状態表示
-- コメント取得開始
-- コメント取得停止
-- コメント一覧表示
+- `/`
+- `/admin`
+
+`/` は `/admin` へリダイレクトする。
+
+画面構成:
+
+- ヘッダー
+- 接続状態バー
+- 通知メッセージ
+- 操作画面タブ
+- 管理・設定タブ
+
+ヘッダー機能:
+
+- 状態更新
+- テストコメント送信
+- テストスパチャ送信
+- OBS URL コピー
+
+操作画面タブ:
+
+- ライブチャット操作
 - コメント検索
-- コメント自動スクロールON/OFF
+- 最新へ追従 ON/OFF
+- コメント一覧
 - コメントカードクリック表示
 - コメント表示ボタン
-- コメント非表示ボタン
-- 現在OBSに表示中のコメント確認
-- テストコメント送信
-- オーバーレイURLコピー
-- 接続状態表示
+- コメントコピー
+- 現在の OBS 表示確認
+- 非表示
+
+管理・設定タブ:
+
+- YouTube OAuth 接続/再接続
+- YouTube 接続解除
+- YouTube Live URL 入力
+- コメント取得開始
+- コメント取得停止
+- 配信タイトル表示
+- チャンネル名表示
+- videoId 表示
+- liveChatId 表示
+- 最終取得時刻表示
+- 最終受信時刻表示
+- OBS URL コピー
+- 現在の OBS 表示確認
 - テーマ設定
 
-表示項目:
-- 配信タイトル
-- チャンネル名
-- 配信URL
-- liveChatId取得状態
-- YouTube API接続状態
-- コメント取得状態
-- OBSオーバーレイ接続状態
-- 最終コメント取得時刻
+接続状態バーの表示:
+
+- Socket 接続中/再接続中
+- OBS 接続中/未接続
+- YouTube OAuth 認可済み/未認可
+- YouTube API 接続中/未接続/エラー
+- stream 接続中/接続済み/再接続中/停止中/終了/エラー
+- 最終同期時刻
 
 コメント一覧の表示項目:
+
 - 投稿者名
 - 投稿者アイコン
 - コメント本文
 - 投稿日時
+- コメント種別
 - メンバー判定
 - モデレーター判定
-- オーナー判定
-- Super Chat判定
-- 表示済み判定
+- 配信者判定
+- Super Chat 判定
+- Super Chat 金額
+- 表示中ラベル
+- 表示済みラベル
+- 最新ラベル
 
-コメント操作:
-- 表示
-- 非表示
-- コピー
-
-## 6.2 オーバーレイ画面
+### 6.2 OBS オーバーレイ画面
 
 URL:
-- /overlay/{overlayToken}
+
+- `/overlay/{overlayToken}`
 
 用途:
-- OBS Browser Source専用
+
+- OBS Browser Source 専用
 - 通常ユーザーが操作しない表示専用ページ
 
 機能:
+
 - 透明背景
-- コメントカード表示
-- CSSアニメーション
-- Socket.IO接続
+- Socket.IO 接続
+- overlay token の検証
+- state sync 受信
 - 表示イベント受信
 - 非表示イベント受信
-- テーマ反映
+- テスト表示イベント受信
+- テーマ更新イベント受信
+- 通常コメントカード表示
+- Super Chat 専用カード表示
+- 表示/非表示アニメーション
+- compact レイアウト
 
 表示仕様:
+
 - 背景は透明
-- OBSの1920x1080キャンバスに対応
-- 1280x720にも対応
-- コメントが長い場合は最大行数で折り返す
+- 1920x1080 を主対象にする
+- 1280x720 などの小さめのキャンバスにも対応する
+- コメントは最大行数で折り返す
+- 長文は必要に応じて文字サイズ自動調整できる
 - 絵文字を表示できる
 - 投稿者アイコンを表示できる
 - 投稿者名を表示できる
-- コメント本文を表示できる
+- メンバー、モデレーター、配信者、Super Chat、テスト表示のバッジを表示できる
 
 ## 7. 機能要件
 
-### FR-001 YouTube接続
+### FR-001 YouTube OAuth
 
-- ユーザーはYouTube API利用のために初回OAuth認可を行える
-- 認可済みの場合は保存済みトークンを利用する
-- アクセストークン期限切れ時はリフレッシュトークンで更新する
-- 認可失敗時は管理画面にエラーを表示する
+- ユーザーは管理画面から YouTube OAuth 接続を開始できる。
+- OAuth URL はサーバーで生成する。
+- OAuth callback で認可コードを受け取り、Google OAuth token に交換する。
+- 取得した token は `data/youtube-token.json` に保存する。
+- 保存済み token がある場合、管理画面には認可済みとして表示する。
+- アクセストークン更新時は refresh token を使う。
+- refresh 時に新しい refresh token が返らない場合、既存 refresh token を維持する。
+- OAuth `state` 検証は現状未実装とする。
 
-### FR-002 配信URL登録
+### FR-002 YouTube Live URL 登録
 
-- ユーザーはYouTubeライブ配信URLを入力できる
-- アプリはURLからvideoIdを抽出する
-- アプリはYouTube APIで対象配信の情報を取得する
-- アプリはliveChatIdを取得する
-- liveChatIdが存在しない場合はエラーを表示する
+- ユーザーは YouTube Live URL または 11文字の videoId を入力できる。
+- アプリは `youtube.com/watch?v=...`、`youtu.be/...`、`/live/...`、`/shorts/...`、`/embed/...` から videoId を抽出できる。
+- videoId が抽出できない場合はエラーを返す。
+- videoId から YouTube API で配信情報を取得する。
+- activeLiveChatId が取得できない場合はエラーを返す。
 
 ### FR-003 コメント取得
 
-- アプリはYouTubeライブチャットからコメントを取得する
-- 取得方式はまずliveChatMessages.listのポーリングを使う
-- YouTube APIのpollingIntervalMillisに従って次回取得する
-- 新着コメントを管理画面に追加する
-- 同一コメントIDは重複表示しない
-- コメント一覧はメモリ上に最新100〜300件程度だけ保持する
-- 配信終了時はコメント取得を停止する
+- コメント取得方式は `liveChat.messages.stream` とする。
+- stream 開始時に liveChatId、pageToken、AbortSignal を渡す。
+- stream から受け取った JSON をパースし、コメント一覧へ正規化する。
+- nextPageToken を保持し、再接続時に利用する。
+- 新着コメントは管理画面へ `comment:new` で配信する。
+- 同一 `platformMessageId` は重複表示しない。
+- コメント一覧はメモリ上に最大300件保持する。
+- offlineAt を受け取った場合は配信終了扱いにして取得を止める。
+- network 系エラーは指数バックオフで再接続する。
+- quota、rate limit、認可エラー、チャット終了などは terminal error として停止する。
 
 ### FR-004 コメント一覧
 
-- 管理画面にコメントを新着順または到着順で表示する
-- 投稿者名を表示する
-- 投稿者アイコンを表示する
-- コメント本文を表示する
-- メンバー、モデレーター、配信者コメントを区別できる
-- 表示済みコメントには表示済みラベルを付ける
+- 管理画面では古いコメントから新しいコメントへ下に流れる見た目にする。
+- 内部状態では新しいコメントを先頭に保持してよい。
+- 検索対象は投稿者名、本文、金額、種別、投稿日時とする。
+- コメントカード全体のクリックで表示できる。
+- 「表示」ボタンでも表示できる。
+- 「コピー」ボタンで本文をクリップボードへコピーできる。
+- 表示したコメントには `displayedAt` を付与し、表示済みラベルを出す。
 
-### FR-005 コメント表示
+### FR-005 OBS 表示
 
-- 配信者は任意のコメントカードまたは「表示」ボタンを押せる
-- 表示ボタン押下後、OBSオーバーレイへ表示イベントを送る
-- OBSオーバーレイはコメントカードを表示する
-- 表示したコメントは次の表示または「非表示」操作まで残る
+- 配信者がコメントを表示すると、サーバーは overlay state の currentMessage を更新する。
+- Socket.IO で overlay:show と overlay:state を配信する。
+- OBS オーバーレイは currentMessage をコメントカードとして表示する。
+- 表示したコメントは自動で消えない。
+- 次のコメントを表示すると置き換わる。
 
-### FR-006 コメント非表示
+### FR-006 OBS 非表示
 
-- 配信者は現在表示中のコメントを非表示にできる
-- 非表示操作後、OBSオーバーレイからコメントカードを消す
+- 配信者は現在表示中のコメントを非表示にできる。
+- 非表示時は currentMessage を null にする。
+- Socket.IO で overlay:hide と overlay:state を配信する。
+- OBS オーバーレイはカードを消す。
 
-### FR-007 テーマ変更
+### FR-007 テスト表示
 
-- 配信者はコメントカードの簡易テーマを変更できる
-- テーマ変更はOBSオーバーレイに反映される
-- 初期テーマを1つ用意する
+- ユーザーは YouTube API 未接続でもテストコメントを送信できる。
+- ユーザーは YouTube API 未接続でもテストスパチャを送信できる。
+- テストコメントはコメント一覧に追加され、OBS に即時表示される。
+- テストスパチャは Super Chat 専用カードで表示される。
+- テストスパチャのデフォルト金額は `¥1,000` とする。
 
-初期テーマ:
-- カード型
-- 投稿者アイコンあり
-- 投稿者名あり
-- コメント本文あり
-- 角丸
-- ドロップシャドウ
-- フェードイン・フェードアウト
+### FR-008 テーマ設定
 
-### FR-008 オーバーレイURL発行
+- ユーザーはテーマプリセットを選択できる。
+- テーマ変更は `data/settings.json` に保存する。
+- テーマ変更は OBS オーバーレイへリアルタイム反映する。
+- 設定項目は以下とする。
 
-- アプリ起動時または初回設定時にOBS用オーバーレイURLを発行する
-- オーバーレイURLはランダムなoverlayTokenを含む
-- オーバーレイURLはログインなしで表示できる
-- オーバーレイURLでは管理操作はできない
+設定項目:
 
-### FR-011 テストコメント
+- stylePreset
+- fontFamily
+- fontSize
+- autoFitText
+- cardWidth
+- cardPosition
+- borderRadius
+- showAvatar
+- showAuthorName
+- backgroundColor
+- textColor
+- accentColor
+- animationType
 
-- 管理画面からテストコメントを送信できる
-- OBSオーバーレイにテストコメントが表示される
-- YouTube API未接続時でも表示確認できる
+プリセット:
 
-### FR-012 接続状態表示
+- Midnight Glass
+- Clinic Calm Pro
+- Warm Pop
+- Minimal Broadcast
+- Festival Neon
+- Comic Pop Voice
 
-管理画面に以下の状態を表示する。
+### FR-009 Overlay URL
 
-- YouTube OAuth認可済み / 未認可
-- YouTube API接続中 / 切断
-- コメント取得中 / 停止
-- OBSオーバーレイ接続中 / 未接続
-- Socket.IO接続中 / 切断
+- アプリは `overlayToken` をローカル設定として保持する。
+- 設定が存在しない場合はランダムな token を生成する。
+- overlay URL は `/overlay/{overlayToken}` とする。
+- overlay token が一致しない Socket.IO 購読は切断する。
+- overlay URL から管理操作は提供しない。
 
-### FR-013 エラーハンドリング
+### FR-010 接続状態
 
-以下のエラーを画面に表示する。
+- 管理画面は Socket 接続状態を表示する。
+- 管理画面は OBS overlay 接続状態を表示する。
+- 管理画面は YouTube OAuth/API 状態を表示する。
+- 管理画面は broadcast stream 状態を表示する。
+- 管理画面は最終同期時刻を表示する。
 
-- YouTube OAuth失敗
-- 配信URL不正
-- videoId未取得
-- liveChatId未取得
-- コメント取得失敗
-- API制限到達
-- OBSオーバーレイ未接続
-- Socket.IO切断
-- 配信終了
-- チャット無効
+## 8. API 要件
 
-## 8. 非機能要件
+### YouTube
 
-### パフォーマンス
+- `GET /api/youtube/auth-url`
+- `GET /api/youtube/callback`
+- `GET /api/youtube/status`
+- `POST /api/youtube/disconnect`
 
-- 管理画面のコメント表示はスムーズに動作すること
-- 管理画面からOBSオーバーレイへの表示反映は可能な限り即時に行う
-- コメント一覧はメモリ上で最新100〜300件程度に制限する
-- OBSオーバーレイは配信画面上でカクつかないこと
+### Broadcast
 
-### 可用性
+- `POST /api/broadcast/start`
+- `POST /api/broadcast/stop`
+- `GET /api/broadcast/status`
 
-- Socket.IO切断時に自動再接続する
-- YouTube API接続が切れた場合は管理画面に状態を表示する
-- 配信終了時に安全にコメント取得を停止する
+### Messages
 
-### セキュリティ
+- `GET /api/messages`
+- `POST /api/messages/{messageId}/show`
 
-個人利用のためSaaS向けの厳密な権限管理は行わない。
-ただし、最低限以下は守る。
+### Overlay
 
-- APIキーやOAuthクライアントシークレットは`.env`に置く
-- OAuthトークンはローカルファイルに保存し、Git管理しない
-- コメント本文をHTMLとして直接描画しない
-- overlayTokenは推測されにくいランダム文字列にする
-- オーバーレイURLから管理操作を実行できないようにする
+- `POST /api/overlay/hide`
 
-### プライバシー
+### Test
 
-- コメント履歴は保存しない
-- コメントはアプリ起動中のみメモリ上に保持する
-- アプリ終了時にコメント一覧は消える
+- `POST /api/test-message`
 
-### OBS互換性
+### Settings
 
-- OBS Browser Sourceで表示できること
-- 背景が透明であること
-- 1920x1080でレイアウトが崩れないこと
-- 1280x720でレイアウトが崩れないこと
-- URLを貼るだけで使えること
+- `GET /api/settings`
+- `PATCH /api/settings`
 
-## 9. データ要件
+## 9. Socket.IO イベント要件
 
-DBは使用しない。
-アプリの状態はメモリとローカルJSONファイルで管理する。
+### Client to Server
 
-### メモリ上で保持する状態
+- `admin:subscribe`
+- `overlay:subscribe`
+- `state:request-sync`
 
-#### AppState
+### Server to Client
+
+- `state:sync`
+- `comment:new`
+- `youtube:status`
+- `broadcast:status`
+- `overlay:connected`
+- `overlay:state`
+- `overlay:show`
+- `overlay:hide`
+- `overlay:theme:update`
+- `overlay:test`
+
+## 10. データ要件
+
+### メモリ保持
+
+アプリ起動中のみ保持する。
 
 - overlayToken
-- currentBroadcastUrl
-- currentVideoId
-- liveChatId
+- messages
+- fetchedMessageIds
 - nextPageToken
-- pollingTimer
-- isFetchingComments
-- youtubeStatus
-- overlayConnected
-- lastFetchedAt
+- current overlay state
+- YouTube status
+- broadcast status
+- overlay connected
+- stream abort controller
+- reconnect timer
 
-#### ChatMessage
+### ChatMessage
 
 - id
 - platformMessageId
@@ -346,163 +428,74 @@ DBは使用しない。
 - publishedAt
 - displayedAt
 
-#### OverlayState
-
-- currentMessage
-- theme
-
-#### DeduplicationState
-
-- fetchedMessageIds
-
-### ローカルJSONに保存する設定
-
-保存先:
-- data/settings.json
-- data/youtube-token.json
-
-#### settings.json
+### Settings
 
 - overlayToken
 - theme
 - lastBroadcastUrl
 
-#### youtube-token.json
+### YouTubeToken
 
 - accessToken
 - refreshToken
 - expiryDate
 
-## 10. API要件
+## 11. 非機能要件
 
-### YouTube接続
+### パフォーマンス
 
-- GET /api/youtube/auth-url
-- GET /api/youtube/callback
-- GET /api/youtube/status
-- POST /api/youtube/disconnect
+- 管理画面のコメント一覧は最大300件に制限する。
+- OBS オーバーレイは表示アニメーション中も配信画面で重くなりにくい実装にする。
+- テーマ変更は Socket.IO で即時反映する。
 
-### 配信・コメント
+### 可用性
 
-- POST /api/broadcast/start
-- POST /api/broadcast/stop
-- GET /api/broadcast/status
-- GET /api/messages
-- POST /api/messages/{messageId}/show
-- POST /api/messages/{messageId}/pin
-- POST /api/overlay/hide
-- POST /api/overlay/unpin
-- POST /api/test-message
+- Socket.IO はクライアント側の自動再接続に任せる。
+- YouTube stream が network 系エラーで閉じた場合はバックオフして再接続する。
+- 配信終了を検知した場合は取得を停止する。
 
-### 設定
+### セキュリティ
 
-- GET /api/settings
-- PATCH /api/settings
+- ローカル利用前提とし、管理画面/API/socket の認証は持たない。
+- 公開サーバー、LAN、VPN、トンネルでは使わない。
+- OAuth secret は `.env.local` に置く。
+- OAuth token は `data/youtube-token.json` に保存し、Git 管理しない。
+- コメント本文を HTML として直接描画しない。
+- overlayToken は推測しづらいランダム文字列にする。
 
-### オーバーレイ
+### プライバシー
 
-- GET /overlay/{overlayToken}
-- Socket.IO /socket.io
-
-## 11. Socket.IOイベント要件
-
-### 管理画面向けイベント
-
-event: comment:new
-
-payload:
-- messageId
-- authorName
-- authorImageUrl
-- messageText
-- publishedAt
-- badges
-
-event: youtube:status
-
-payload:
-- status
-- reason
-
-event: overlay:connected
-
-payload:
-- connected
-- connectedAt
-
-event: overlay:state
-
-payload:
-- currentMessage
-
-### OBSオーバーレイ向けイベント
-
-event: overlay:show
-
-payload:
-- messageId
-- authorName
-- authorImageUrl
-- messageText
-- badges
-- theme
-
-event: overlay:hide
-
-payload:
-- messageId
-
-event: overlay:theme:update
-
-payload:
-- theme
-
-event: overlay:test
-
-payload:
-- authorName
-- authorImageUrl
-- messageText
-- theme
+- コメント履歴は保存しない。
+- コメントはアプリ起動中のメモリだけに保持する。
+- アプリ終了時にコメント一覧は消える。
 
 ## 12. 受け入れ条件
 
-### YouTube接続
+- ローカルでアプリを起動できる。
+- `/admin` を開ける。
+- YouTube OAuth 接続を開始できる。
+- 認可済み状態を表示できる。
+- YouTube Live URL から videoId を抽出できる。
+- liveChatId を取得できる。
+- stream でコメントを取得できる。
+- 管理画面にコメント一覧が表示される。
+- 同一コメントが重複表示されない。
+- コメントカードクリックまたは「表示」で OBS に表示できる。
+- 表示したコメントが自動で消えない。
+- 「非表示」で OBS から消せる。
+- テストコメントを表示できる。
+- テストスパチャを Super Chat 専用カードで表示できる。
+- テーマ変更が OBS に反映される。
+- コメント履歴が永続保存されない。
 
-- 初回OAuth認可ができる
-- 認可済み状態が管理画面に表示される
-- YouTubeライブ配信URLを入力すると配信情報が表示される
-- liveChatIdが取得できる
-- liveChatIdが取得できない場合はエラーが表示される
+## 13. 現状の既知制約
 
-### コメント取得
-
-- 配信中のコメントが管理画面に表示される
-- 新着コメントが重複せず追加される
-- コメント取得状態が画面に表示される
-- アプリ終了後にコメント履歴が残らない
-
-### OBS表示
-
-- OBS Browser SourceにオーバーレイURLを貼ると透明背景で表示される
-- 管理画面でコメントカードまたは「表示」を押すとOBS上にコメントが表示される
-- 表示したコメントは自動では消えない
-- 「非表示」を押すと即座に消える
-
-### テーマ・設定
-
-- テーマ設定を変更するとOBS表示に反映される
-- 設定は必要最小限だけローカルJSONに保存される
-
-## 13. 初期リリースの完成条件
-
-- ローカルでアプリを起動できる
-- YouTube OAuth認可ができる
-- YouTubeライブ配信URLを登録できる
-- liveChatIdを取得できる
-- コメントをリアルタイム取得できる
-- 管理画面にコメント一覧が出る
-- コメントを手動でOBSに表示できる
-- OBS側で透明背景のコメントカードが表示される
-- 非表示ができる
-- テストコメントでOBS表示確認ができる
+- OAuth `state` 検証は未実装。
+- YouTube status は token/env 確認が中心で、実 API 疎通確認ではない。
+- 配信開始 API は完全には冪等化されていない。
+- 配信開始リクエスト競合への保護は限定的。
+- YouTube 接続解除時に既存 stream を必ず停止する連動は未整備。
+- stream 再接続に回数上限がない。
+- 一部 route は壊れた JSON を整形済み `VALIDATION_ERROR` にできない可能性がある。
+- 色入力は CSS color としての厳密検証をしていない。
+- 依存バージョンは `latest` 指定が多い。

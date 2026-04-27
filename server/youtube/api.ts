@@ -188,10 +188,10 @@ export function classifyYouTubeError(error: unknown): ClassifiedYouTubeError {
       retryable: false
     };
   }
-  if (reason === "authorizationRequired" || reason === "insufficientPermissions" || getErrorStatus(error) === 401) {
+  if (isUnauthorizedYouTubeError(error, reason, message)) {
     return {
       kind: "unauthorized",
-      message: "YouTube authorization is invalid or expired. Reconnect YouTube OAuth.",
+      message: "YouTube authorization is invalid, expired, or missing required permissions. Reconnect YouTube OAuth.",
       retryable: false
     };
   }
@@ -335,14 +335,17 @@ function stripJsonStreamPrefix(input: string) {
 
 function extractYouTubeErrorReason(error: unknown) {
   const data = isRecord(error) && isRecord(error.response) ? error.response.data : undefined;
-  if (isRecord(data) && isRecord(data.error)) {
-    const errors = data.error.errors;
-    const first = Array.isArray(errors) && isRecord(errors[0]) ? errors[0] : undefined;
-    return readString(first?.reason) ?? readString(data.error.reason);
+  if (isRecord(data)) {
+    if (isRecord(data.error)) {
+      const errors = data.error.errors;
+      const first = Array.isArray(errors) && isRecord(errors[0]) ? errors[0] : undefined;
+      return readString(first?.reason) ?? readString(data.error.reason);
+    }
+    return readString(data.error) ?? readString(data.reason);
   }
   const errors = isRecord(error) ? error.errors : undefined;
   const first = Array.isArray(errors) && isRecord(errors[0]) ? errors[0] : undefined;
-  return readString(first?.reason);
+  return readString(first?.reason) ?? (isRecord(error) ? readString(error.reason) : null);
 }
 
 function getYouTubeErrorMessage(error: unknown) {
@@ -353,6 +356,9 @@ function getYouTubeErrorMessage(error: unknown) {
   if (isRecord(data) && isRecord(data.error)) {
     return readString(data.error.message) ?? "YouTube API request failed.";
   }
+  if (isRecord(data)) {
+    return readString(data.error_description) ?? readString(data.error) ?? "YouTube API request failed.";
+  }
   return "YouTube API request failed.";
 }
 
@@ -360,6 +366,29 @@ function getErrorStatus(error: unknown) {
   const status = isRecord(error) && isRecord(error.response) ? error.response.status : undefined;
   return typeof status === "number" ? status : undefined;
 }
+
+function isUnauthorizedYouTubeError(error: unknown, reason: string | null, message: string) {
+  const status = getErrorStatus(error);
+  if (status === 401 || reason === "invalid_grant") {
+    return true;
+  }
+  if (reason && unauthorizedYouTubeErrorReasons.has(reason)) {
+    return true;
+  }
+  if (status !== 403) {
+    return false;
+  }
+  const text = `${reason ?? ""} ${message}`.toLowerCase();
+  return text.includes("permission") || text.includes("scope") || text.includes("auth");
+}
+
+const unauthorizedYouTubeErrorReasons = new Set([
+  "authError",
+  "authorizationRequired",
+  "insufficientAuthentication",
+  "insufficientPermission",
+  "insufficientPermissions"
+]);
 
 function isAbortError(error: unknown) {
   return error instanceof Error && (error.name === "AbortError" || error.message.toLowerCase().includes("aborted"));

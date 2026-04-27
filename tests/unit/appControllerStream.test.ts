@@ -30,7 +30,7 @@ const settings = {
   theme: {}
 };
 
-const message = (id: string): ChatMessage => ({
+const message = (id: string, overrides: Partial<ChatMessage> = {}): ChatMessage => ({
   id,
   platformMessageId: id,
   authorName: "Viewer",
@@ -40,7 +40,8 @@ const message = (id: string): ChatMessage => ({
   isModerator: false,
   isOwner: false,
   isSuperChat: false,
-  publishedAt: "2026-04-27T12:00:00.000Z"
+  publishedAt: "2026-04-27T12:00:00.000Z",
+  ...overrides
 });
 
 function deferred<T = void>() {
@@ -113,7 +114,7 @@ describe("AppController stream lifecycle", () => {
 
     await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
     await vi.waitFor(() => expect(calls).toHaveLength(1));
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
     await vi.waitFor(() => expect(calls).toHaveLength(2));
 
     expect(calls[1].pageToken).toBe("token-1");
@@ -169,5 +170,233 @@ describe("AppController stream lifecycle", () => {
         error: "The YouTube live chat has ended."
       });
     });
+  });
+
+  test("deduplicates concurrent starts for the same video", async () => {
+    const liveChatInfo = deferred<{
+      videoId: string;
+      liveChatId: string;
+      streamTitle: string;
+      channelName: string;
+    }>();
+    mocks.getLiveChatInfo.mockReturnValue(liveChatInfo.promise);
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    const firstStart = controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    const secondStart = controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(() => expect(mocks.getLiveChatInfo).toHaveBeenCalledTimes(1));
+
+    liveChatInfo.resolve({
+      videoId: "dQw4w9WgXcQ",
+      liveChatId: "live-chat-1",
+      streamTitle: "Test stream",
+      channelName: "Test channel"
+    });
+    const [firstStatus, secondStatus] = await Promise.all([firstStart, secondStart]);
+
+    expect(firstStatus).toBe(secondStatus);
+    expect(mocks.getLiveChatInfo).toHaveBeenCalledTimes(1);
+    expect(mocks.streamLiveChatMessages).toHaveBeenCalledTimes(1);
+    await controller.stopBroadcast();
+  });
+
+  test("does not let an older start overwrite a newer stream", async () => {
+    const firstInfo = deferred<{
+      videoId: string;
+      liveChatId: string;
+      streamTitle: string;
+      channelName: string;
+    }>();
+    mocks.getLiveChatInfo.mockImplementation((videoId: string) => {
+      if (videoId === "dQw4w9WgXcQ") {
+        return firstInfo.promise;
+      }
+      return Promise.resolve({
+        videoId,
+        liveChatId: "live-chat-new",
+        streamTitle: "New stream",
+        channelName: "New channel"
+      });
+    });
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    const oldStart = controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(() => expect(mocks.getLiveChatInfo).toHaveBeenCalledWith("dQw4w9WgXcQ"));
+    const newStart = controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=aaaaaaaaaaa" });
+
+    firstInfo.resolve({
+      videoId: "dQw4w9WgXcQ",
+      liveChatId: "live-chat-old",
+      streamTitle: "Old stream",
+      channelName: "Old channel"
+    });
+    await oldStart;
+    const newStatus = await newStart;
+
+    expect(newStatus).toMatchObject({
+      currentVideoId: "aaaaaaaaaaa",
+      liveChatId: "live-chat-new",
+      connectionState: "connecting"
+    });
+    expect(mocks.streamLiveChatMessages).toHaveBeenCalledTimes(1);
+    expect(mocks.streamLiveChatMessages).toHaveBeenCalledWith(
+      expect.objectContaining({ liveChatId: "live-chat-new" })
+    );
+    await controller.stopBroadcast();
+  });
+
+  test("stops after five consecutive short stream closes", async () => {
+    vi.useFakeTimers();
+    const calls: Array<{ pageToken?: string }> = [];
+    mocks.streamLiveChatMessages.mockImplementation(async function* (input: { pageToken?: string }) {
+      calls.push(input);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+
+    for (const [index, delay] of [2000, 4000, 8000, 16000].entries()) {
+      await vi.advanceTimersByTimeAsync(delay);
+      await vi.waitFor(() => expect(calls).toHaveLength(index + 2));
+    }
+
+    await vi.waitFor(async () => {
+      expect((await controller.getState()).broadcastStatus).toMatchObject({
+        isFetchingComments: false,
+        connectionState: "error",
+        error: "Live chat stream closed too quickly too many times."
+      });
+    });
+    expect(calls).toHaveLength(5);
+  });
+
+  test("limits reconnects to eight attempts", async () => {
+    vi.useFakeTimers();
+    const calls: Array<{ pageToken?: string }> = [];
+    mocks.streamLiveChatMessages.mockImplementation(async function* (input: { pageToken?: string }) {
+      calls.push(input);
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+
+    const reconnectTimeline = [
+      5000, 2000, 5000, 4000, 5000, 8000, 5000, 16000, 5000, 32000, 5000, 60000, 5000, 60000, 5000,
+      60000, 5000
+    ];
+    for (const delay of reconnectTimeline) {
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+
+    await vi.waitFor(async () => {
+      expect((await controller.getState()).broadcastStatus).toMatchObject({
+        isFetchingComments: false,
+        connectionState: "error",
+        reconnectAttempt: 8,
+        maxReconnectAttempts: 8,
+        error: "Live chat stream could not reconnect."
+      });
+    });
+    expect(calls).toHaveLength(9);
+  });
+
+  test("resets reconnect counters and delay when a normal batch is received", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-27T12:00:00.000Z"));
+    const calls: Array<{ pageToken?: string }> = [];
+    const statuses: Array<{
+      emittedAt: number;
+      reconnectAttempt?: number;
+      nextReconnectAt?: string;
+      connectionState?: string;
+    }> = [];
+    mocks.streamLiveChatMessages.mockImplementation(async function* (input: { pageToken?: string }) {
+      calls.push(input);
+      if (calls.length === 2) {
+        yield { messages: [message("after-reconnect")], nextPageToken: "token-after-reconnect" };
+      }
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    controller.events.on("broadcast:status", (status) => {
+      statuses.push({
+        emittedAt: Date.now(),
+        reconnectAttempt: status.reconnectAttempt,
+        nextReconnectAt: status.nextReconnectAt,
+        connectionState: status.connectionState
+      });
+    });
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    await vi.waitFor(() => expect(statuses).toContainEqual(expect.objectContaining({ connectionState: "connected" })));
+
+    const connectedStatus = statuses.find((status) => status.connectionState === "connected");
+    expect(connectedStatus).toMatchObject({ reconnectAttempt: 0, nextReconnectAt: undefined });
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    const connectedIndex = statuses.findIndex((status) => status.connectionState === "connected");
+    const resetReconnectStatus = statuses
+      .slice(connectedIndex + 1)
+      .find((status) => status.connectionState === "reconnecting" && status.reconnectAttempt === 1);
+    expect(resetReconnectStatus?.nextReconnectAt).toBeDefined();
+    expect(Date.parse(resetReconnectStatus!.nextReconnectAt!) - resetReconnectStatus!.emittedAt).toBe(2000);
+    await controller.stopBroadcast();
+  });
+
+  test("retains capped messages by importance while keeping newest-first order", async () => {
+    const displayedAt = "2026-04-27T12:00:01.000Z";
+    const displayedNormals = Array.from({ length: 301 }, (_, index) =>
+      message(`displayed-normal-${index}`, { displayedAt })
+    );
+    const batch = [
+      message("undisplayed-super-chat", { isSuperChat: true }),
+      message("undisplayed-owner", { isOwner: true }),
+      message("undisplayed-normal"),
+      message("displayed-member", { isMember: true, displayedAt }),
+      ...displayedNormals
+    ];
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      yield { messages: batch, nextPageToken: "token-1" };
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => expect(await controller.getMessages()).toHaveLength(300));
+
+    const retainedIds = (await controller.getMessages()).map((item) => item.id);
+    expect(retainedIds).toContain("undisplayed-super-chat");
+    expect(retainedIds).toContain("undisplayed-owner");
+    expect(retainedIds).toContain("undisplayed-normal");
+    expect(retainedIds).toContain("displayed-member");
+    expect(retainedIds).toContain("displayed-normal-300");
+    expect(retainedIds).not.toContain("displayed-normal-0");
+    expect(retainedIds).not.toContain("displayed-normal-1");
+    expect(retainedIds.indexOf("displayed-normal-300")).toBeLessThan(retainedIds.indexOf("displayed-normal-299"));
+    expect(retainedIds.indexOf("displayed-normal-299")).toBeLessThan(retainedIds.indexOf("displayed-normal-298"));
+    await controller.stopBroadcast();
   });
 });

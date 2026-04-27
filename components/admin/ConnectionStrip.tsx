@@ -45,11 +45,14 @@ export function ConnectionStrip({
   lastSyncLabel?: string;
   onRefresh: () => void;
 }) {
+  const needsReconnect = Boolean(youtubeStatus.needsReconnect);
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
       <Badge tone={socketConnected ? "green" : "amber"}>{socketConnected ? "Socket接続中" : "Socket再接続中"}</Badge>
       <Badge tone={overlayConnected ? "green" : "slate"}>{overlayConnected ? "OBS接続中" : "OBS未接続"}</Badge>
-      <Badge tone={youtubeStatus.oauth === "authorized" ? "green" : "amber"}>{`${oauthLabel(youtubeStatus.oauth)} / ${apiLabel(youtubeStatus.api)}`}</Badge>
+      <Badge tone={needsReconnect ? "amber" : youtubeStatus.oauth === "authorized" ? "green" : "amber"}>
+        {needsReconnect ? "再接続推奨" : `${oauthLabel(youtubeStatus.oauth)} / ${apiLabel(youtubeStatus.api)}`}
+      </Badge>
       <Badge tone={streamTone(broadcastStatus.connectionState)}>{streamLabel(broadcastStatus.connectionState)}</Badge>
       {lastSyncLabel ? (
         <span className="inline-flex items-center gap-1 text-slate-500">
