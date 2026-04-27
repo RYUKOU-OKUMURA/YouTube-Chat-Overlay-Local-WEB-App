@@ -77,6 +77,7 @@ function presetCardStyle(preset: (typeof overlayStylePresets)[number], active: b
 }
 
 type SettingsPatch = {
+  displayDurationSec?: number;
   theme?: Partial<Theme>;
   lastBroadcastUrl?: string;
 };
@@ -85,10 +86,10 @@ export function SettingsPanel({
   settings,
   onPatchSettings
 }: {
-  settings: Pick<Settings, "theme">;
+  settings: Pick<Settings, "displayDurationSec" | "theme">;
   onPatchSettings: (patch: SettingsPatch) => void | Promise<void>;
 }) {
-  const { theme } = settings;
+  const { displayDurationSec, theme } = settings;
 
   return (
     <Panel title="表示・テーマ設定" subtitle="配信中でも読みやすい表示へ調整できます。">
@@ -142,6 +143,16 @@ export function SettingsPanel({
           </div>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
+          <Field label="表示秒数">
+            <input
+              type="number"
+              min={3}
+              max={60}
+              value={displayDurationSec}
+              onChange={(event) => onPatchSettings({ displayDurationSec: Number(event.target.value) })}
+              className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
+            />
+          </Field>
           <Field label="フォント">
             <select
               value={theme.fontFamily}

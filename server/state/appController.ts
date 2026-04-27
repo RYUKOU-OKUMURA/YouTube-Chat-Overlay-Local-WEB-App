@@ -51,6 +51,7 @@ class AppController {
   private fetchedMessageIds = new Set<string>();
   private nextPageToken: string | undefined;
   private pollTimer: NodeJS.Timeout | null = null;
+  private overlayHideTimer: NodeJS.Timeout | null = null;
   private broadcastStatus: BroadcastStatus = { isFetchingComments: false };
   private youtubeStatus: YouTubeStatus = { oauth: "unauthorized", api: "disconnected" };
   private overlayConnected = false;
@@ -147,6 +148,7 @@ class AppController {
       currentMessage: { ...message, displayedAt: new Date().toISOString() },
       isPinned: false
     };
+    this.scheduleOverlayAutoHide();
     this.markDisplayed(messageId);
     this.events.emit("overlay:show", this.overlayState);
     this.events.emit("overlay:state", this.overlayState);
@@ -162,6 +164,7 @@ class AppController {
       currentMessage: { ...message, displayedAt: new Date().toISOString() },
       isPinned: true
     };
+    this.stopOverlayHideTimer();
     this.markDisplayed(messageId);
     this.events.emit("overlay:pin", this.overlayState);
     this.events.emit("overlay:state", this.overlayState);
@@ -171,6 +174,7 @@ class AppController {
 
   async hideOverlay() {
     await this.init();
+    this.stopOverlayHideTimer();
     this.overlayState = {
       ...this.overlayState,
       currentMessage: null,
@@ -184,10 +188,13 @@ class AppController {
 
   async unpinOverlay() {
     await this.init();
+    const currentMessage = this.overlayState.currentMessage;
     this.overlayState = {
       ...this.overlayState,
+      currentMessage: currentMessage ? { ...currentMessage, displayedAt: new Date().toISOString() } : null,
       isPinned: false
     };
+    this.scheduleOverlayAutoHide();
     this.events.emit("overlay:unpin", this.overlayState);
     this.events.emit("overlay:state", this.overlayState);
     await this.emitSync();
@@ -215,6 +222,7 @@ class AppController {
       currentMessage: { ...message, displayedAt: new Date().toISOString() },
       isPinned: false
     };
+    this.scheduleOverlayAutoHide();
     this.events.emit("overlay:test", this.overlayState);
     this.events.emit("overlay:state", this.overlayState);
     await this.emitSync();
@@ -232,6 +240,7 @@ class AppController {
       displayDurationSec: this.settings.displayDurationSec,
       theme: this.settings.theme
     };
+    this.scheduleOverlayAutoHide();
     this.events.emit("overlay:theme:update", this.settings);
     this.events.emit("overlay:state", this.overlayState);
     await this.emitSync();
@@ -309,6 +318,24 @@ class AppController {
     }
   }
 
+  private scheduleOverlayAutoHide() {
+    this.stopOverlayHideTimer();
+    if (!this.overlayState.currentMessage || this.overlayState.isPinned) {
+      return;
+    }
+
+    this.overlayHideTimer = setTimeout(() => {
+      void this.hideOverlay();
+    }, this.overlayState.displayDurationSec * 1000);
+  }
+
+  private stopOverlayHideTimer() {
+    if (this.overlayHideTimer) {
+      clearTimeout(this.overlayHideTimer);
+      this.overlayHideTimer = null;
+    }
+  }
+
   private async emitSync() {
     this.events.emit("state:sync", await this.getState());
   }
@@ -316,7 +343,6 @@ class AppController {
 
 declare global {
   // Keep one controller across Next route bundles and the custom Socket.IO server.
-  // eslint-disable-next-line no-var
   var __youtubeChatOverlayController: AppController | undefined;
 }
 

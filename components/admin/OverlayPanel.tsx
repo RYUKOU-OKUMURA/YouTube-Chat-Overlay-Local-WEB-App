@@ -1,4 +1,4 @@
-import { Copy, EyeOff, MessageSquareMore } from "lucide-react";
+import { Copy, EyeOff, MessageSquareMore, PinOff } from "lucide-react";
 import type { CSSProperties } from "react";
 import type { OverlayState } from "@/types";
 import { Badge } from "@/components/common/Badge";
@@ -21,21 +21,24 @@ const activeMessageTextStyle: CSSProperties = {
 export function OverlayPanel({
   overlay,
   onHide,
+  onUnpin,
   onCopyMessage,
   onCopyOverlayUrl
 }: {
   overlay: OverlayState;
   onHide: () => void;
+  onUnpin: () => void;
   onCopyMessage: () => void;
   onCopyOverlayUrl: () => void;
 }) {
   const active = overlay.currentMessage;
+  const statusLabel = active ? (overlay.isPinned ? "固定表示" : "表示中") : "非表示";
   return (
     <Panel
       title="現在のOBS表示"
       subtitle="OBSに出ているコメントを確認します。"
       className="rounded-2xl bg-slate-50"
-      actions={<Badge tone={active ? "amber" : "slate"}>{active ? "表示中" : "非表示"}</Badge>}
+      actions={<Badge tone={active ? "amber" : "slate"}>{statusLabel}</Badge>}
     >
       <div className="grid gap-3">
         {active ? (
@@ -72,10 +75,13 @@ export function OverlayPanel({
           <Button variant="ghost" icon={<EyeOff className="h-4 w-4" />} onClick={onHide}>
             非表示
           </Button>
+          <Button variant="ghost" icon={<PinOff className="h-4 w-4" />} onClick={onUnpin} disabled={!active || !overlay.isPinned}>
+            固定解除
+          </Button>
           <Button variant="ghost" icon={<Copy className="h-4 w-4" />} onClick={onCopyMessage} disabled={!active}>
             コメントをコピー
           </Button>
-          <Button variant="ghost" className="col-span-2" icon={<MessageSquareMore className="h-4 w-4" />} onClick={onCopyOverlayUrl}>
+          <Button variant="ghost" icon={<MessageSquareMore className="h-4 w-4" />} onClick={onCopyOverlayUrl}>
             OBS URLをコピー
           </Button>
         </div>

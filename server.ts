@@ -21,6 +21,6 @@ const httpServer = createServer((req, res) => {
 
 attachSocketServer(httpServer);
 
-httpServer.listen(port, () => {
+httpServer.listen(port, hostname, () => {
   console.log(`Ready on http://${hostname}:${port}`);
 });

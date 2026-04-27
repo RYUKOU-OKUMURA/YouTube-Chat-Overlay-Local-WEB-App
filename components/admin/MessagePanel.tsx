@@ -1,5 +1,5 @@
 import { useMemo, type RefObject, type CSSProperties } from "react";
-import { Copy, Play, Search, ArrowDownToLine } from "lucide-react";
+import { Copy, Pin, Play, Search, ArrowDownToLine } from "lucide-react";
 import type { ChatMessage } from "@/types";
 import { Badge } from "@/components/common/Badge";
 import { Button } from "@/components/common/Button";
@@ -43,7 +43,9 @@ export function MessagePanel({
   autoscroll,
   setAutoscroll,
   onShowMessage,
+  onPinMessage,
   onCopyMessage,
+  busyAction,
   listRef,
   filteredCount
 }: {
@@ -54,7 +56,9 @@ export function MessagePanel({
   autoscroll: boolean;
   setAutoscroll: (value: boolean) => void;
   onShowMessage: (message: ChatMessage) => void;
+  onPinMessage: (message: ChatMessage) => void;
   onCopyMessage: (message: ChatMessage) => void;
+  busyAction: string | null;
   listRef: RefObject<HTMLDivElement | null>;
   filteredCount: number;
 }) {
@@ -93,10 +97,9 @@ export function MessagePanel({
                 return (
                   <article
                     key={message.id}
-                    className={`group grid cursor-pointer grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-xl border-l-4 px-3 py-3 transition ${
+                    className={`group grid grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-xl border-l-4 px-3 py-3 transition ${
                       active ? "border-red-600 bg-red-50/70" : "border-transparent hover:bg-slate-50"
                     }`}
-                    onClick={() => onShowMessage(message)}
                   >
                     {message.authorImageUrl ? (
                       <img src={message.authorImageUrl} alt="" className="mt-0.5 h-9 w-9 rounded-full object-cover" />
@@ -123,6 +126,23 @@ export function MessagePanel({
                       </p>
                       {message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
                       <div className="mt-2 flex flex-wrap gap-2 opacity-100 transition lg:opacity-70 lg:group-hover:opacity-100">
+                        <Button
+                          size="sm"
+                          icon={<Play className="h-3.5 w-3.5" />}
+                          onClick={() => onShowMessage(message)}
+                          disabled={busyAction === `show-${message.id}`}
+                        >
+                          表示
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={<Pin className="h-3.5 w-3.5" />}
+                          onClick={() => onPinMessage(message)}
+                          disabled={busyAction === `pin-${message.id}`}
+                        >
+                          固定
+                        </Button>
                         <Button size="sm" variant="ghost" icon={<Copy className="h-3.5 w-3.5" />} onClick={(event) => { event.stopPropagation(); onCopyMessage(message); }}>
                           コピー
                         </Button>
