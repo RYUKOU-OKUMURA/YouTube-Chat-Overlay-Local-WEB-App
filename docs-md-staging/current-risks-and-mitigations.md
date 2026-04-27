@@ -11,7 +11,7 @@
 - そのうち約 15 人が継続的にコメントする。
 - 配信者は管理画面でコメントを拾い、OBS オーバーレイへポップアップ表示しながら会話する。
 
-結論として、現在のコメント取得方式は `liveChatMessages.list` の短間隔 polling ではなく `liveChat.messages.stream` なので、2 時間配信でコメントを受け続ける設計方針としては妥当です。最大の不安は受信量そのものではなく、配信中に起きたときに復旧しづらい「開始処理の競合」「再接続の暴走」「OAuth/接続解除との状態不整合」と、コメント量が増えたときの「未表示コメントを拾いきる操作性」です。
+結論として、現在のコメント取得方式は `liveChatMessages.list` の短間隔 polling ではなく `liveChat.messages.stream` なので、2 時間配信でコメントを受け続ける設計方針としては妥当です。初回調査時点で最大の不安だった「開始処理の競合」「再接続の暴走」「OAuth/接続解除との状態不整合」「未表示コメントを拾いきる操作性」は、2026-04-28 時点で優先対応ぶんを実装済みです。
 
 ## 優先度の見方
 
@@ -22,13 +22,21 @@
 
 ## 今すぐやるべきこと
 
-| 優先度 | 対応 | なぜ今必要か | 実装方針 |
-| --- | --- | --- | --- |
-| P0 | `startBroadcast` のサーバー側冪等化と競合制御 | 現状は `getLiveChatInfo()` 後に既存 stream を reset するため、連打・別タブ・遅いリクエストの逆転で stream 張り直しや状態上書きが起きる可能性がある。配信開始時の事故が一番ストレスになる。 | 開始処理を 1 本に直列化する。取得中かつ同一 `videoId` なら既存 `broadcastStatus` を返す。開始中は in-flight promise または lock を共有する。古い開始リクエストの結果は破棄する。 |
-| P0 | stream 再接続ポリシーの強化 | stream が短時間で閉じ続けると、`liveChat.messages.stream` を張り直し続ける。API quota 消費増と「接続中/再接続中」の不安定表示につながる。 | 連続再接続回数、短時間 close 回数、累積失敗時間の上限を入れる。上限到達時は停止して明確なエラーを表示する。backoff は 1 秒開始ではなく、短時間 close が続いたら早めに長めへ寄せる。 |
-| P0 | YouTube 接続解除時に stream を必ず停止する | 現状の `/api/youtube/disconnect` は token 削除と status 更新だけで、既存 stream を止めない。UI は未認可なのにコメント取得が続く状態不整合が起き得る。 | `disconnectYouTube()` 後に `appController.stopBroadcast()` 相当を呼ぶ。接続解除後の `broadcastStatus` は `stopped` または明示的な `error` にする。 |
-| P1 | 未表示コメントを拾いやすくする運用キュー | コメント保持は最大 300 件。2 時間で 300 件を超える可能性は高く、配信者が追いつかないと古い未表示コメントが流れる。視聴者との会話体験に直結する。 | 単なる最新 300 件ではなく、未表示コメント、Super Chat、メンバー/モデレーター/配信者コメントを優先保持する。表示済み/未表示フィルタ、未表示件数、最新追従 ON/OFF の視認性を強める。 |
-| P1 | 認可切れ・refresh token 不足の検知と案内 | `/api/youtube/status` は token/env 確認中心なので、token revoke、期限切れ、scope 不足を開始時まで検知しにくい。配信開始直前に失敗すると復旧が面倒。 | 開始時の 401/403/`invalid_grant` を再認可案内へ寄せる。token の `expiryDate` と `refreshToken` 有無を状態に含め、配信前チェックで警告する。 |
+| 状況 | 優先度 | 対応 | なぜ今必要か | 実装内容 |
+| --- | --- | --- | --- | --- |
+| 実装済み | P0 | `startBroadcast` のサーバー側冪等化と競合制御 | `getLiveChatInfo()` 後に既存 stream を reset すると、連打・別タブ・遅いリクエストの逆転で stream 張り直しや状態上書きが起きる可能性があった。 | 同一 `videoId` の取得中開始は既存 `broadcastStatus` を返す。開始処理を in-flight queue で直列化し、古い開始リクエストの結果が新しい stream を上書きしないようにした。 |
+| 実装済み | P0 | stream 再接続ポリシーの強化 | stream が短時間で閉じ続けると、`liveChat.messages.stream` を張り直し続け、API quota 消費増と不安定表示につながる。 | 再接続は最大 8 回、初期 2 秒、最大 60 秒に制限。短時間 close が 5 回続いたら `connectionState: "error"` で停止する。正常 batch 受信時は再接続カウンタをリセットする。 |
+| 実装済み | P0 | YouTube 接続解除時に stream を必ず停止する | UI は未認可なのにコメント取得が続く状態不整合が起き得た。 | `/api/youtube/disconnect` で token 削除前に `appController.stopBroadcast()` を呼び、broadcast status を停止状態へ同期する。 |
+| 実装済み | P1 | 未表示コメントを拾いやすくする運用キュー | 2 時間で 300 件を超える可能性が高く、配信者が追いつかないと古い未表示コメントが流れる。 | メモリ保持は 300 件のまま、未表示 Super Chat、未表示の配信者/モデレーター/メンバー、未表示通常、表示済み重要、表示済み通常の順で優先保持する。管理画面に `すべて`、`未表示`、`重要` の表示切替と未表示件数を追加した。 |
+| 実装済み | P1 | 認可切れ・refresh token 不足の検知と案内 | token revoke、期限切れ、scope 不足を開始時まで検知しにくく、配信開始直前に失敗すると復旧が面倒だった。 | `YouTubeStatus` に `hasRefreshToken`、`accessTokenExpiresAt`、`needsReconnect` を追加。refresh token が無い認可済み状態では `再接続推奨` を表示する。`invalid_grant`、401、403 permission/scope 系は再接続案内に寄せる。 |
+
+実装確認:
+
+- `npm test`: 8 files / 35 tests passed
+- `npx tsc --noEmit --ignoreDeprecations 6.0`: passed
+- `npm run build`: passed
+- `npm run test:e2e -- tests/e2e/admin-overlay-smoke.spec.ts`: passed
+- `npm run lint`: `eslint: command not found` のため未確認
 
 ## 今すぐの P0 ではないが早めに直したいこと
 
@@ -77,20 +85,20 @@ API 使用量が増える主因:
 
 ## 推奨対応順
 
-1. `startBroadcast` をサーバー側で冪等化し、開始処理を直列化する。
-2. stream 再接続に上限、短時間 close 検知、明確な停止エラーを入れる。
-3. YouTube 接続解除時に stream を停止し、broadcast status を整合させる。
-4. parser/認可/ライブ状態のエラー分類を分ける。
-5. 未表示コメント、Super Chat、重要コメントを流しにくいキュー設計にする。
-6. 配信前チェックとして refresh token 有無、token 期限、認可エラー案内を整える。
-7. Socket 同期と初期ロードの状態競合を整理する。
-8. 依存固定、OAuth `state`、不正 JSON、設定入力 UX を後続で改善する。
+1. 実装済み: `startBroadcast` をサーバー側で冪等化し、開始処理を直列化する。
+2. 実装済み: stream 再接続に上限、短時間 close 検知、明確な停止エラーを入れる。
+3. 実装済み: YouTube 接続解除時に stream を停止し、broadcast status を整合させる。
+4. 一部実装済み: 認可エラー分類は改善済み。parser/ライブ状態の詳細分類は未対応。
+5. 実装済み: 未表示コメント、Super Chat、重要コメントを流しにくいキュー設計にする。
+6. 実装済み: 配信前チェックとして refresh token 有無、token 期限、認可エラー案内を整える。
+7. 未対応: Socket 同期と初期ロードの状態競合を整理する。
+8. 未対応: 依存固定、OAuth `state`、不正 JSON、設定入力 UX を後続で改善する。
 
 ## 確認済み事項
 
 - `liveChatMessages.list` の定期 polling 実装は見当たらない。
 - コメント取得は `liveChat.messages.stream` 方式。
-- `/api/youtube/status` は token/env 確認中心で、YouTube Data API の実疎通確認はしていない。
+- `/api/youtube/status` は token/env 確認中心で、YouTube Data API の実疎通確認はしていない。ただし refresh token 有無、access token 期限、再接続推奨状態は返す。
 - Socket の状態同期や `/api/broadcast/status` は YouTube API を叩いていない。
 - コメント一覧はメモリ上で最大 300 件。
 - OBS への表示は自動ではなく、管理画面で選択したコメントを表示する仕様。
