@@ -13,6 +13,23 @@ function apiLabel(value: YouTubeStatus["api"]) {
   return "未接続";
 }
 
+function streamLabel(value: BroadcastStatus["connectionState"]) {
+  if (value === "connecting") return "stream接続中";
+  if (value === "connected") return "stream接続済み";
+  if (value === "reconnecting") return "stream再接続中";
+  if (value === "ended") return "stream終了";
+  if (value === "error") return "streamエラー";
+  return "stream停止中";
+}
+
+function streamTone(value: BroadcastStatus["connectionState"]) {
+  if (value === "connected") return "blue";
+  if (value === "connecting" || value === "reconnecting") return "amber";
+  if (value === "error") return "rose";
+  if (value === "ended") return "green";
+  return "slate";
+}
+
 export function ConnectionStrip({
   socketConnected,
   overlayConnected,
@@ -33,9 +50,7 @@ export function ConnectionStrip({
       <Badge tone={socketConnected ? "green" : "amber"}>{socketConnected ? "Socket接続中" : "Socket再接続中"}</Badge>
       <Badge tone={overlayConnected ? "green" : "slate"}>{overlayConnected ? "OBS接続中" : "OBS未接続"}</Badge>
       <Badge tone={youtubeStatus.oauth === "authorized" ? "green" : "amber"}>{`${oauthLabel(youtubeStatus.oauth)} / ${apiLabel(youtubeStatus.api)}`}</Badge>
-      <Badge tone={broadcastStatus.isFetchingComments ? "blue" : "slate"}>
-        {broadcastStatus.isFetchingComments ? "コメント取得中" : "コメント停止中"}
-      </Badge>
+      <Badge tone={streamTone(broadcastStatus.connectionState)}>{streamLabel(broadcastStatus.connectionState)}</Badge>
       {lastSyncLabel ? (
         <span className="inline-flex items-center gap-1 text-slate-500">
           <Clock3 className="h-3.5 w-3.5" />

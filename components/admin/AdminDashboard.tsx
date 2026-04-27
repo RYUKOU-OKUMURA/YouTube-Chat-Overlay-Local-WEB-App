@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { Copy, MonitorCog, RefreshCcw, SlidersHorizontal, TestTube2 } from "lucide-react";
+import { Copy, MonitorCog, RefreshCcw, SlidersHorizontal, TestTube2, BadgeJapaneseYen } from "lucide-react";
 import type { AppState, BroadcastStatus, ChatMessage, Settings, Theme, YouTubeStatus } from "@/types";
 import { defaultTheme, socketEvents } from "@/types";
 import { Button } from "@/components/common/Button";
@@ -257,10 +257,19 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
     }
   }
 
-  async function testMessage() {
-    setBusyAction("test");
+  async function testMessage(kind: "normal" | "superChat" = "normal") {
+    const isSuperChat = kind === "superChat";
+    setBusyAction(isSuperChat ? "test-super-chat" : "test");
     try {
-      const result = await fetchJson<{ message: ChatMessage; overlay: AppState["overlay"] }>("/api/test-message", { method: "POST" });
+      const result = await fetchJson<{ message: ChatMessage; overlay: AppState["overlay"] }>(
+        "/api/test-message",
+        isSuperChat
+          ? {
+              method: "POST",
+              body: JSON.stringify({ kind: "superChat" })
+            }
+          : { method: "POST" }
+      );
       setState((prev) =>
         prev
           ? {
@@ -270,9 +279,9 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
             }
           : prev
       );
-      setNotice("テストコメントを送信しました。");
+      setNotice(isSuperChat ? "テストスパチャを送信しました。" : "テストコメントを送信しました。");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "テストコメントを送信できませんでした。");
+      setNotice(error instanceof Error ? error.message : isSuperChat ? "テストスパチャを送信できませんでした。" : "テストコメントを送信できませんでした。");
     } finally {
       setBusyAction(null);
     }
@@ -354,8 +363,15 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
                 <Button icon={<RefreshCcw className="h-4 w-4" />} onClick={syncStatus} variant="ghost">
                   更新
                 </Button>
-                <Button icon={<TestTube2 className="h-4 w-4" />} onClick={testMessage} disabled={busyAction === "test"}>
+                <Button icon={<TestTube2 className="h-4 w-4" />} onClick={() => testMessage()} disabled={busyAction === "test"}>
                   テストコメント
+                </Button>
+                <Button
+                  icon={<BadgeJapaneseYen className="h-4 w-4" />}
+                  onClick={() => testMessage("superChat")}
+                  disabled={busyAction === "test-super-chat"}
+                >
+                  テストスパチャ
                 </Button>
                 <Button variant="ghost" icon={<Copy className="h-4 w-4" />} onClick={copyOverlayUrl}>
                   OBS URLをコピー

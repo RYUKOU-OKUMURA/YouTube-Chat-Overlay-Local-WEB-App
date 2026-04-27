@@ -50,7 +50,10 @@ export type BroadcastStatus = {
   liveChatId?: string;
   streamTitle?: string;
   channelName?: string;
+  connectionMode?: "stream";
+  connectionState?: "connecting" | "connected" | "reconnecting" | "stopped" | "ended" | "error";
   lastFetchedAt?: string;
+  lastReceivedAt?: string;
   error?: string;
 };
 
@@ -69,6 +72,7 @@ export type ApiErrorCode =
   | "YOUTUBE_UNAUTHORIZED"
   | "INVALID_BROADCAST_URL"
   | "LIVE_CHAT_NOT_FOUND"
+  | "YOUTUBE_API_ERROR"
   | "MESSAGE_NOT_FOUND"
   | "VALIDATION_ERROR"
   | "POLLING_ERROR"
@@ -92,6 +96,11 @@ export type YouTubeToken = {
 
 export type StartBroadcastInput = {
   broadcastUrl: string;
+};
+
+export type TestMessageInput = {
+  kind?: "normal" | "superChat";
+  amountText?: string;
 };
 
 export type PatchSettingsInput = Partial<{

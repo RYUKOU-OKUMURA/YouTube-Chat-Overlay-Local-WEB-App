@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { getLiveChatInfo, fetchLiveChatMessages } from "@/server/youtube/api";
+import { classifyYouTubeError, getLiveChatInfo, streamLiveChatMessages } from "@/server/youtube/api";
 import { parseYouTubeVideoId } from "@/server/youtube/parseYouTubeUrl";
 import { getYouTubeStatus } from "@/server/youtube/oauth";
 import { patchSettings, readSettings } from "@/server/settings/settingsStore";
@@ -12,6 +12,7 @@ import type {
   PatchSettingsInput,
   Settings,
   StartBroadcastInput,
+  TestMessageInput,
   YouTubeStatus
 } from "@/types";
 
@@ -39,8 +40,10 @@ class TypedEmitter extends EventEmitter {
 }
 
 const maxMessages = 300;
+const initialReconnectDelayMs = 1000;
+const maxReconnectDelayMs = 60000;
 
-class AppController {
+export class AppController {
   readonly events = new TypedEmitter();
 
   private initialized = false;
@@ -48,7 +51,10 @@ class AppController {
   private messages: ChatMessage[] = [];
   private fetchedMessageIds = new Set<string>();
   private nextPageToken: string | undefined;
-  private pollTimer: NodeJS.Timeout | null = null;
+  private streamAbortController: AbortController | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private streamGeneration = 0;
+  private reconnectDelayMs = initialReconnectDelayMs;
   private broadcastStatus: BroadcastStatus = { isFetchingComments: false };
   private youtubeStatus: YouTubeStatus = { oauth: "unauthorized", api: "disconnected" };
   private overlayConnected = false;
@@ -65,7 +71,9 @@ class AppController {
     };
     this.broadcastStatus = {
       isFetchingComments: false,
-      currentBroadcastUrl: this.settings.lastBroadcastUrl
+      currentBroadcastUrl: this.settings.lastBroadcastUrl,
+      connectionMode: "stream",
+      connectionState: "stopped"
     };
     this.youtubeStatus = await getYouTubeStatus();
     this.initialized = true;
@@ -99,31 +107,38 @@ class AppController {
     }
 
     const info = await getLiveChatInfo(videoId);
-    this.stopPollTimer();
+    const generation = this.resetActiveStream();
     this.nextPageToken = undefined;
+    this.reconnectDelayMs = initialReconnectDelayMs;
     this.fetchedMessageIds.clear();
     this.messages = [];
     this.settings = await patchSettings({ lastBroadcastUrl: input.broadcastUrl });
     this.broadcastStatus = {
       isFetchingComments: true,
+      connectionMode: "stream",
+      connectionState: "connecting",
       currentBroadcastUrl: input.broadcastUrl,
       currentVideoId: info.videoId,
       liveChatId: info.liveChatId,
       streamTitle: info.streamTitle,
-      channelName: info.channelName
+      channelName: info.channelName,
+      error: undefined
     };
     this.events.emit("broadcast:status", this.broadcastStatus);
     await this.emitSync();
-    void this.pollOnce();
+    void this.consumeLiveChatStream(generation);
     return this.broadcastStatus;
   }
 
   async stopBroadcast() {
     await this.init();
-    this.stopPollTimer();
+    this.resetActiveStream();
     this.broadcastStatus = {
       ...this.broadcastStatus,
-      isFetchingComments: false
+      isFetchingComments: false,
+      connectionMode: "stream",
+      connectionState: "stopped",
+      error: undefined
     };
     this.events.emit("broadcast:status", this.broadcastStatus);
     await this.emitSync();
@@ -161,19 +176,24 @@ class AppController {
     return this.overlayState;
   }
 
-  async sendTestMessage() {
+  async sendTestMessage(input: TestMessageInput = {}) {
     await this.init();
+    const isSuperChat = input.kind === "superChat";
+    const now = Date.now();
     const message: ChatMessage = {
-      id: `test-${Date.now()}`,
-      platformMessageId: `test-${Date.now()}`,
-      authorName: "テスト視聴者",
+      id: `test-${isSuperChat ? "super-chat" : "normal"}-${now}`,
+      platformMessageId: `test-${isSuperChat ? "super-chat" : "normal"}-${now}`,
+      authorName: isSuperChat ? "スパチャテスト視聴者" : "テスト視聴者",
       authorImageUrl: "https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144.png",
-      messageText: "OBSオーバーレイ表示確認用のテストコメントです。",
+      messageText: isSuperChat
+        ? "Super Chatプレビュー用のテストメッセージです。金額表示と強調スタイルを確認できます。"
+        : "OBSオーバーレイ表示確認用のテストコメントです。",
       messageType: "testMessage",
       isMember: false,
       isModerator: false,
       isOwner: false,
-      isSuperChat: false,
+      isSuperChat,
+      amountText: isSuperChat ? input.amountText?.trim() || "¥1,000" : undefined,
       publishedAt: new Date().toISOString()
     };
     this.ingestMessages([message]);
@@ -213,32 +233,98 @@ class AppController {
     await this.emitSync();
   }
 
-  private async pollOnce() {
-    if (!this.broadcastStatus.isFetchingComments || !this.broadcastStatus.liveChatId) {
+  private async consumeLiveChatStream(generation: number) {
+    const liveChatId = this.broadcastStatus.liveChatId;
+    if (!this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments || !liveChatId) {
       return;
     }
+
+    const abortController = new AbortController();
+    this.streamAbortController = abortController;
+
     try {
-      const result = await fetchLiveChatMessages(this.broadcastStatus.liveChatId, this.nextPageToken);
-      this.nextPageToken = result.nextPageToken;
-      this.ingestMessages(result.messages);
-      this.broadcastStatus = {
-        ...this.broadcastStatus,
-        isFetchingComments: true,
-        lastFetchedAt: new Date().toISOString(),
-        error: undefined
-      };
-      this.events.emit("broadcast:status", this.broadcastStatus);
-      await this.emitSync();
-      this.pollTimer = setTimeout(() => void this.pollOnce(), result.pollingIntervalMillis);
+      for await (const batch of streamLiveChatMessages({
+        liveChatId,
+        pageToken: this.nextPageToken,
+        signal: abortController.signal
+      })) {
+        if (!this.isCurrentStream(generation) || abortController.signal.aborted) {
+          return;
+        }
+
+        this.nextPageToken = batch.nextPageToken ?? this.nextPageToken;
+        this.reconnectDelayMs = initialReconnectDelayMs;
+        this.ingestMessages(batch.messages);
+
+        const now = new Date().toISOString();
+        const ended = Boolean(batch.offlineAt);
+        this.broadcastStatus = {
+          ...this.broadcastStatus,
+          isFetchingComments: !ended,
+          connectionMode: "stream",
+          connectionState: ended ? "ended" : "connected",
+          lastFetchedAt: now,
+          lastReceivedAt: now,
+          error: undefined
+        };
+        this.events.emit("broadcast:status", this.broadcastStatus);
+        await this.emitSync();
+
+        if (ended) {
+          this.clearCurrentAbortController(abortController);
+          return;
+        }
+      }
+
+      if (this.isCurrentStream(generation) && !abortController.signal.aborted) {
+        this.clearCurrentAbortController(abortController);
+        await this.scheduleStreamReconnect(generation);
+      }
     } catch (error) {
+      this.clearCurrentAbortController(abortController);
+      if (!this.isCurrentStream(generation) || abortController.signal.aborted) {
+        return;
+      }
+
+      const classified = classifyYouTubeError(error);
+      if (classified.retryable) {
+        await this.scheduleStreamReconnect(generation);
+        return;
+      }
+
       this.broadcastStatus = {
         ...this.broadcastStatus,
         isFetchingComments: false,
-        error: error instanceof Error ? error.message : "Comment polling failed."
+        connectionMode: "stream",
+        connectionState: classified.kind === "liveChatEnded" ? "ended" : "error",
+        error: classified.message
       };
       this.events.emit("broadcast:status", this.broadcastStatus);
       await this.emitSync();
     }
+  }
+
+  private async scheduleStreamReconnect(generation: number) {
+    if (!this.isCurrentStream(generation) || !this.broadcastStatus.liveChatId) {
+      return;
+    }
+
+    const delay = this.reconnectDelayMs;
+    this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, maxReconnectDelayMs);
+    this.broadcastStatus = {
+      ...this.broadcastStatus,
+      isFetchingComments: true,
+      connectionMode: "stream",
+      connectionState: "reconnecting",
+      error: undefined
+    };
+    this.events.emit("broadcast:status", this.broadcastStatus);
+    await this.emitSync();
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.consumeLiveChatStream(generation);
+    }, delay);
   }
 
   private ingestMessages(messages: ChatMessage[]) {
@@ -267,10 +353,30 @@ class AppController {
     );
   }
 
-  private stopPollTimer() {
-    if (this.pollTimer) {
-      clearTimeout(this.pollTimer);
-      this.pollTimer = null;
+  private resetActiveStream() {
+    this.streamGeneration += 1;
+    this.reconnectDelayMs = initialReconnectDelayMs;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.streamAbortController) {
+      this.streamAbortController.abort();
+      this.streamAbortController = null;
+    }
+
+    return this.streamGeneration;
+  }
+
+  private isCurrentStream(generation: number) {
+    return generation === this.streamGeneration;
+  }
+
+  private clearCurrentAbortController(abortController: AbortController) {
+    if (this.streamAbortController === abortController) {
+      this.streamAbortController = null;
     }
   }
 

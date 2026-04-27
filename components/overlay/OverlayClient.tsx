@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { Crown, Sparkles } from "lucide-react";
 import { io, type Socket } from "socket.io-client";
+import { getSuperChatTier } from "@/lib/superChat";
 import type { AppState, OverlayState, Settings, ChatMessage, Theme } from "@/types";
 import { socketEvents } from "@/types";
 
@@ -36,6 +38,16 @@ type OverlayClientProps = {
 
 function messageKey(message: ChatMessage) {
   return `${message.id}:${message.displayedAt ?? message.publishedAt}`;
+}
+
+function authorInitials(authorName: string) {
+  return authorName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("")
+    .slice(0, 2);
 }
 
 function cardPlacement(position: Theme["cardPosition"], padding: number) {
@@ -174,13 +186,7 @@ function OverlayCard({
       : "flex items-start gap-4 px-6 py-5";
   const messageClassName = `${isMinimal ? "mt-3 pl-8 text-[1.05em] font-black leading-[1.38]" : isComic ? "mt-4 text-[1.05em] font-black leading-[1.42]" : "mt-3 text-[1em] leading-[1.5]"} whitespace-pre-wrap text-left`;
   const messageLineClamp = isMinimal ? 3 : isCompact ? 5 : 7;
-  const initials = message.authorName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("")
-    .slice(0, 2);
+  const initials = authorInitials(message.authorName);
 
   const variants = {
     hidden: {
@@ -369,6 +375,166 @@ function OverlayCard({
   );
 }
 
+function SuperChatCard({
+  message,
+  theme,
+  isCompact,
+}: {
+  message: ChatMessage;
+  theme: Theme;
+  isCompact: boolean;
+}) {
+  const cardKey = messageKey(message);
+  const tier = getSuperChatTier(message.amountText);
+  const initials = authorInitials(message.authorName);
+  const animationType = theme.animationType;
+  const width = Math.min(theme.cardWidth, isCompact ? 680 : 760);
+  const radius = Math.max(16, Math.min(theme.borderRadius, 30));
+  const messageLineClamp = isCompact ? 3 : 4;
+
+  const variants = {
+    hidden: {
+      opacity: 0,
+      y: animationType === "fade" ? 0 : animationType === "scale" ? 12 : 30,
+      scale: animationType === "scale" ? 0.94 : 1
+    },
+    visible: {
+      opacity: 1,
+      y: 0,
+      scale: 1
+    },
+    exit: {
+      opacity: 0,
+      y: animationType === "fade" ? 0 : animationType === "scale" ? 10 : 18,
+      scale: animationType === "scale" ? 0.98 : 1
+    }
+  };
+
+  return (
+    <motion.section
+      key={cardKey}
+      role="presentation"
+      aria-hidden
+      data-testid="super-chat-card"
+      data-super-chat-tier={tier.id}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
+      variants={variants}
+      transition={{
+        type: animationType === "fade" ? "tween" : "spring",
+        duration: animationType === "fade" ? 0.22 : 0.44,
+        bounce: 0.2,
+        damping: 22,
+        stiffness: 190
+      }}
+      className="pointer-events-none relative overflow-visible"
+      style={{
+        width: "min(calc(100vw - 48px), 760px)",
+        maxWidth: width,
+        minWidth: 0,
+        color: tier.colors.text,
+        fontFamily: `${theme.fontFamily}, Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji`,
+        fontSize: `clamp(18px, ${Math.max(20, Math.min(theme.fontSize, 30))}px, 30px)`,
+        borderRadius: radius,
+        background: tier.colors.panel,
+        border: `1px solid ${tier.colors.border}`,
+        boxShadow: `0 22px 48px rgba(0,0,0,0.34), 0 0 44px ${tier.colors.glow}, inset 0 1px 0 rgba(255,255,255,0.24)`,
+        willChange: "opacity, transform"
+      }}
+    >
+      <div
+        className="absolute -inset-2 -z-10 rounded-[inherit] blur-xl"
+        style={{ background: `radial-gradient(circle at 50% 35%, ${tier.colors.glow}, transparent 68%)` }}
+      />
+      <Sparkles
+        className="absolute -right-3 -top-3 h-9 w-9 rotate-12"
+        aria-hidden
+        style={{ color: tier.colors.accent, filter: `drop-shadow(0 0 12px ${tier.colors.glow})` }}
+      />
+      <Sparkles
+        className="absolute -left-4 bottom-5 h-6 w-6 -rotate-12 opacity-80"
+        aria-hidden
+        style={{ color: tier.colors.accent }}
+      />
+
+      <div
+        className="flex items-center gap-3 px-4 py-3 sm:px-5"
+        style={{
+          background: tier.colors.header,
+          borderRadius: `${radius - 1}px ${radius - 1}px 0 0`,
+          color: "#111827"
+        }}
+      >
+        <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-white/85 text-base font-black text-slate-950 shadow-lg ring-2 ring-white/70 sm:h-12 sm:w-12">
+          {message.authorImageUrl ? (
+            <img
+              src={message.authorImageUrl}
+              alt=""
+              className="h-full w-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <span>{initials || "?"}</span>
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-slate-950/88 text-amber-200">
+              <Crown className="h-4 w-4" aria-hidden />
+            </span>
+            <h2 className="min-w-0 truncate text-[0.82em] font-black leading-tight text-slate-950">
+              {message.authorName}
+            </h2>
+          </div>
+        </div>
+
+        <div
+          className="max-w-[38%] shrink-0 truncate rounded-full px-3 py-1 text-[0.74em] font-black leading-none text-slate-950 shadow-sm ring-1 ring-black/10"
+          style={{ background: "rgba(255,255,255,0.76)" }}
+        >
+          {message.amountText ?? "Super Chat"}
+        </div>
+      </div>
+
+      <div className="relative px-5 pb-5 pt-4 sm:px-6 sm:pb-6">
+        <div
+          className="mb-3 inline-flex items-center gap-2 rounded-full px-3 py-1 text-[0.58em] font-black uppercase tracking-wide"
+          style={{ background: tier.colors.accentSoft, color: tier.colors.accent }}
+        >
+          <Sparkles className="h-3.5 w-3.5" aria-hidden />
+          Super Chat
+        </div>
+        <p
+          className="whitespace-pre-wrap text-left text-[0.95em] font-bold leading-[1.42]"
+          style={{
+            display: "-webkit-box",
+            overflow: "hidden",
+            overflowWrap: "anywhere",
+            wordBreak: "normal",
+            hyphens: "auto",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: messageLineClamp
+          }}
+        >
+          {message.messageText}
+        </p>
+      </div>
+
+      <div
+        className="absolute -bottom-5 left-12 h-10 w-10 rotate-45"
+        style={{
+          background: tier.colors.pointer,
+          borderBottom: `1px solid ${tier.colors.border}`,
+          borderRight: `1px solid ${tier.colors.border}`,
+          boxShadow: `8px 8px 18px ${tier.colors.glow}`
+        }}
+      />
+    </motion.section>
+  );
+}
+
 export function OverlayClient({ overlayToken }: OverlayClientProps) {
   const viewport = useViewportSize();
   const isCompact = viewport.width < compactBreakpoint.width || viewport.height < compactBreakpoint.height;
@@ -459,13 +625,22 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
         <div className="pointer-events-none" style={placement}>
           <AnimatePresence initial={false} mode="wait">
             {visibleMessage && overlayState ? (
-              <OverlayCard
-                key={currentKey ?? visibleMessage.id}
-                message={visibleMessage}
-                theme={overlayState.theme}
-                isCompact={isCompact}
-                eventName={eventName}
-              />
+              visibleMessage.isSuperChat ? (
+                <SuperChatCard
+                  key={currentKey ?? visibleMessage.id}
+                  message={visibleMessage}
+                  theme={overlayState.theme}
+                  isCompact={isCompact}
+                />
+              ) : (
+                <OverlayCard
+                  key={currentKey ?? visibleMessage.id}
+                  message={visibleMessage}
+                  theme={overlayState.theme}
+                  isCompact={isCompact}
+                  eventName={eventName}
+                />
+              )
             ) : null}
           </AnimatePresence>
         </div>

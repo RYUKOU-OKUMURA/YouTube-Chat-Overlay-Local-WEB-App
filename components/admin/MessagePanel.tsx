@@ -92,6 +92,13 @@ export function MessagePanel({
               orderedMessages.map((message, index) => {
                 const active = message.id === activeMessageId;
                 const isLatest = index === orderedMessages.length - 1;
+                const rowClassName = message.isSuperChat
+                  ? active
+                    ? "border-red-600 bg-red-50/80 ring-1 ring-amber-300"
+                    : "border-amber-400 bg-amber-50/90 hover:bg-amber-100/70"
+                  : active
+                    ? "border-red-600 bg-red-50/70"
+                    : "border-transparent hover:bg-slate-50";
                 return (
                   <article
                     key={message.id}
@@ -105,9 +112,7 @@ export function MessagePanel({
                         onShowMessage(message);
                       }
                     }}
-                    className={`group grid cursor-pointer grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-xl border-l-4 px-3 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 ${
-                      active ? "border-red-600 bg-red-50/70" : "border-transparent hover:bg-slate-50"
-                    }`}
+                    className={`group grid cursor-pointer grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-xl border-l-4 px-3 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 ${rowClassName}`}
                   >
                     {message.authorImageUrl ? (
                       <img src={message.authorImageUrl} alt="" className="mt-0.5 h-9 w-9 rounded-full object-cover" />
@@ -129,10 +134,15 @@ export function MessagePanel({
                         {message.displayedAt ? <Badge tone="blue" className="border-0 bg-sky-100">表示済み</Badge> : null}
                         {isLatest ? <Badge tone="slate" className="border-0 bg-slate-950 text-white">最新</Badge> : null}
                       </div>
+                      {message.isSuperChat ? (
+                        <div className="mt-2 inline-flex rounded-full bg-amber-500 px-3 py-1 text-sm font-bold text-white shadow-sm shadow-amber-200">
+                          {message.amountText ?? "Super Chat"}
+                        </div>
+                      ) : null}
                       <p className="mt-1 whitespace-pre-wrap text-[15px] leading-6 text-slate-900" style={messagePreviewStyle}>
                         {message.messageText}
                       </p>
-                      {message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
+                      {!message.isSuperChat && message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
                       <div className="mt-2 flex flex-wrap gap-2 opacity-100 transition lg:opacity-70 lg:group-hover:opacity-100">
                         <Button
                           size="sm"

@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
-import type { Settings, ApiResponse } from "@/types";
+import type { AppState, ChatMessage, Settings, ApiResponse } from "@/types";
+
+type TestMessageResult = {
+  message: ChatMessage;
+  overlay: AppState["overlay"];
+};
 
 test.describe("admin/overlay smoke", () => {
   test("opens admin and overlay and exercises the test-comment flow", async ({ context, page }) => {
@@ -51,6 +56,44 @@ test.describe("admin/overlay smoke", () => {
 
     await page.getByRole("button", { name: "非表示" }).first().click();
     await expect(overlayMessage).toBeHidden();
+
+    const superChatResponse = await page.request.post("/api/test-message", {
+      data: {
+        kind: "superChat"
+      }
+    });
+    const superChatResult = (await superChatResponse.json()) as ApiResponse<TestMessageResult>;
+    expect(superChatResult.ok).toBe(true);
+    if (!superChatResult.ok) {
+      throw new Error(superChatResult.error.message);
+    }
+
+    const superChatMessage = superChatResult.data.message;
+    expect(superChatMessage.isSuperChat).toBe(true);
+    expect(superChatMessage.amountText).toBe("¥1,000");
+
+    const superChatAdminRow = page
+      .locator("article")
+      .filter({ hasText: superChatMessage.messageText })
+      .filter({ hasText: "¥1,000" })
+      .first();
+    await expect(superChatAdminRow).toBeVisible();
+    await expect(superChatAdminRow).toContainText("Super Chat");
+    await expect(superChatAdminRow).toContainText("¥1,000");
+
+    const superChatOverlayCard = overlayPage
+      .getByTestId("super-chat-card")
+      .filter({ hasText: superChatMessage.messageText })
+      .filter({ hasText: "¥1,000" })
+      .first();
+    await expect(superChatOverlayCard).toBeVisible();
+    await expect(superChatOverlayCard).toContainText("¥1,000");
+    await page.waitForTimeout(3500);
+    await expect(superChatOverlayCard).toBeVisible();
+    await expect(superChatOverlayCard).toContainText("¥1,000");
+
+    await page.getByRole("button", { name: "非表示" }).first().click();
+    await expect(superChatOverlayCard).toBeHidden();
 
     await page.request.patch("/api/settings", {
       data: {
