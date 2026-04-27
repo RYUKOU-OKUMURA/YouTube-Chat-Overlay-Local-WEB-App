@@ -165,6 +165,16 @@ export function SettingsPanel({
               className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
             />
           </Field>
+          <Field label="文字サイズの自動調整">
+            <div className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3">
+              <input
+                type="checkbox"
+                checked={Boolean(theme.autoFitText)}
+                onChange={(event) => onPatchSettings({ theme: { autoFitText: event.target.checked } })}
+              />
+              <span className="text-sm">長い本文をカード内に収める</span>
+            </div>
+          </Field>
           <Field label="カード幅">
             <input
               type="number"

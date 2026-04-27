@@ -14,6 +14,7 @@ export const themeSchema = z.object({
   ]).default(defaultTheme.stylePreset),
   fontFamily: z.string().min(1).max(120).default(defaultTheme.fontFamily),
   fontSize: z.number().int().min(16).max(64).default(defaultTheme.fontSize),
+  autoFitText: z.boolean().default(defaultTheme.autoFitText),
   cardWidth: z.number().int().min(360).max(1200).default(defaultTheme.cardWidth),
   cardPosition: z.enum([
     "bottom-left",

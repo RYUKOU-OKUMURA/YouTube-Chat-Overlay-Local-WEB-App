@@ -10,6 +10,7 @@ import { socketEvents } from "@/types";
 
 const desktopViewportSize = { width: 1920, height: 1080 };
 const compactBreakpoint = { width: 1600, height: 900 };
+const autoFitMinFontSize = 16;
 
 type OverlayEventName =
   | "sync"
@@ -69,6 +70,31 @@ function cardPlacement(position: Theme["cardPosition"], padding: number) {
     default:
       return { ...shared, bottom: padding, left: "50%", transform: "translateX(-50%)" };
   }
+}
+
+function autoFitFontSize({
+  text,
+  baseFontSize,
+  maxWidth,
+  lineClamp,
+  isCompact,
+}: {
+  text: string;
+  baseFontSize: number;
+  maxWidth: number;
+  lineClamp: number;
+  isCompact: boolean;
+}) {
+  const normalizedText = text.trim();
+  if (!normalizedText) return baseFontSize;
+
+  const explicitLineCount = normalizedText.split(/\r?\n/).length;
+  const widthFactor = Math.max(0.82, Math.min(maxWidth / 760, 1.18));
+  const comfortableChars = lineClamp * 28 * widthFactor * (isCompact ? 0.9 : 1);
+  const pressure = Math.max(normalizedText.length / comfortableChars, explicitLineCount / lineClamp);
+
+  if (pressure <= 1) return baseFontSize;
+  return Math.max(autoFitMinFontSize, Math.round(baseFontSize / Math.sqrt(pressure)));
 }
 
 function useViewportSize() {
@@ -186,6 +212,16 @@ function OverlayCard({
       : "flex items-start gap-4 px-6 py-5";
   const messageClassName = `${isMinimal ? "mt-3 pl-8 text-[1.05em] font-black leading-[1.38]" : isComic ? "mt-4 text-[1.05em] font-black leading-[1.42]" : "mt-3 text-[1em] leading-[1.5]"} whitespace-pre-wrap text-left`;
   const messageLineClamp = isMinimal ? 3 : isCompact ? 5 : 7;
+  const messageBaseFontSize = theme.fontSize * (isMinimal || isComic ? 1.05 : 1);
+  const messageFontSize = theme.autoFitText
+    ? autoFitFontSize({
+        text: message.messageText,
+        baseFontSize: messageBaseFontSize,
+        maxWidth: maxCardWidth,
+        lineClamp: messageLineClamp,
+        isCompact
+      })
+    : undefined;
   const initials = authorInitials(message.authorName);
 
   const variants = {
@@ -352,6 +388,7 @@ function OverlayCard({
               overflowWrap: "anywhere",
               wordBreak: "normal",
               hyphens: "auto",
+              fontSize: messageFontSize,
               WebkitBoxOrient: "vertical",
               WebkitLineClamp: messageLineClamp
             }}
@@ -391,6 +428,17 @@ function SuperChatCard({
   const width = Math.min(theme.cardWidth, isCompact ? 680 : 760);
   const radius = Math.max(16, Math.min(theme.borderRadius, 30));
   const messageLineClamp = isCompact ? 3 : 4;
+  const cardFontSize = Math.max(20, Math.min(theme.fontSize, 30));
+  const messageBaseFontSize = cardFontSize * 0.95;
+  const messageFontSize = theme.autoFitText
+    ? autoFitFontSize({
+        text: message.messageText,
+        baseFontSize: messageBaseFontSize,
+        maxWidth: width,
+        lineClamp: messageLineClamp,
+        isCompact
+      })
+    : undefined;
 
   const variants = {
     hidden: {
@@ -435,7 +483,7 @@ function SuperChatCard({
         minWidth: 0,
         color: tier.colors.text,
         fontFamily: `${theme.fontFamily}, Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji`,
-        fontSize: `clamp(18px, ${Math.max(20, Math.min(theme.fontSize, 30))}px, 30px)`,
+        fontSize: `clamp(18px, ${cardFontSize}px, 30px)`,
         borderRadius: radius,
         background: tier.colors.panel,
         border: `1px solid ${tier.colors.border}`,
@@ -514,6 +562,7 @@ function SuperChatCard({
             overflowWrap: "anywhere",
             wordBreak: "normal",
             hyphens: "auto",
+            fontSize: messageFontSize,
             WebkitBoxOrient: "vertical",
             WebkitLineClamp: messageLineClamp
           }}

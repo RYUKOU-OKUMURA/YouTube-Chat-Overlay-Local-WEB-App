@@ -4,6 +4,7 @@ export type Theme = {
   stylePreset: "midnight-glass" | "warm-pop" | "minimal-broadcast" | "festival-neon" | "clinic-calm" | "comic-pop";
   fontFamily: string;
   fontSize: number;
+  autoFitText: boolean;
   cardWidth: number;
   cardPosition: "bottom-left" | "bottom-center" | "bottom-right" | "top-left" | "top-center" | "top-right";
   borderRadius: number;
@@ -112,6 +113,7 @@ export const defaultTheme: Theme = {
   stylePreset: "midnight-glass",
   fontFamily: "Inter, system-ui, sans-serif",
   fontSize: 28,
+  autoFitText: false,
   cardWidth: 760,
   cardPosition: "bottom-center",
   borderRadius: 22,
