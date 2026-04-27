@@ -1,7 +1,7 @@
 # 技術スタック
 # YouTube Chat Overlay Local WEB App v1.0
 
-更新日: 2026-04-27
+更新日: 2026-04-28
 
 このドキュメントは、現在の実装に合わせた技術構成メモです。初期案では `liveChatMessages.list` のポーリングを前提にしていましたが、現行実装は `liveChat.messages.stream` を使います。
 
@@ -110,7 +110,7 @@ Next.js App Router の route handler を API として使う。
 - broadcast status 管理
 - stream lifecycle 管理
 - コメント dedupe
-- コメント最大件数制限
+- コメント最大件数制限と重要コメント優先保持
 - overlay state 管理
 - EventEmitter による Socket.IO 連携
 - test message 生成
@@ -188,9 +188,10 @@ data/
 
 状態取得:
 
-- 初期ロード時に REST API を並列取得
 - Socket.IO 接続後に `admin:subscribe`
-- `state:sync` で全体状態を同期
+- `state:sync` で full `AppState` を同期
+- Socket sync が一定時間届かない場合だけ `/api/state` の full snapshot へ fallback
+- Socket 接続中の手動再同期は `state:request-sync` を使う
 
 主な UI 状態:
 
@@ -223,7 +224,8 @@ data/
 - `html` と `body` を transparent background にする
 - Socket.IO 接続後に `overlay:subscribe` する
 - token 不一致時はサーバー側で切断される
-- `state:sync`、`overlay:show`、`overlay:hide`、`overlay:test`、`overlay:theme:update` を受ける
+- `overlay:sync`、`overlay:show`、`overlay:hide`、`overlay:test`、`overlay:theme:update` を受ける
+- `overlay:sync` は `OverlayState` のみを受け、管理画面用の messages や YouTube/broadcast status は受けない
 - `AnimatePresence` で表示/非表示を制御する
 - 1600x900 未満を compact 扱いにする
 
@@ -287,6 +289,7 @@ Socket.IO を同一 HTTP server 上の `/socket.io` で動かす。
 ### Server to Client
 
 - `state:sync`
+- `overlay:sync`
 - `comment:new`
 - `youtube:status`
 - `broadcast:status`
@@ -302,7 +305,7 @@ Socket.IO を同一 HTTP server 上の `/socket.io` で動かす。
 - 管理画面は `admin` room に入る。
 - オーバーレイは `overlay:{overlayToken}` room に入る。
 
-現状、`comment:new`、`youtube:status`、`broadcast:status`、`overlay:connected` は主に admin 向けに送る。`overlay:show`、`overlay:hide`、`overlay:state`、`overlay:test`、`overlay:theme:update` は全体 emit している。
+`state:sync`、`comment:new`、`youtube:status`、`broadcast:status`、`overlay:connected` は admin room に送る。`overlay:sync`、`overlay:show`、`overlay:hide`、`overlay:state`、`overlay:test`、`overlay:theme:update` は現在の overlay token に対応する overlay room に送る。`overlay:theme:update` は `Settings` 全体ではなく `{ theme }` だけを送る。
 
 ## 8. YouTube API
 
@@ -324,12 +327,14 @@ Socket.IO を同一 HTTP server 上の `/socket.io` で動かす。
 - token を `data/youtube-token.json` に保存
 - `getAuthorizedClient()` で OAuth client を生成
 - `tokens` event で token refresh 結果を保存
+- `getYouTubeStatus()` は `hasRefreshToken`、`accessTokenExpiresAt`、`needsReconnect` を返す
+- refresh token がない認可済み状態では管理画面に再接続推奨を表示する
 
 現状の制約:
 
 - OAuth `state` は未検証
 - `getYouTubeStatus()` は env と token file の存在確認が中心
-- token revoke や scope 不足は開始時の API エラーで検知する
+- token revoke、期限切れ、scope 不足は開始時の API エラー分類で再接続案内に寄せる
 
 ### 配信情報取得
 
@@ -347,6 +352,10 @@ Socket.IO を同一 HTTP server 上の `/socket.io` で動かす。
 - stream title
 - channel name
 - `liveStreamingDetails.activeLiveChatId`
+- scheduledStartTime
+- actualStartTime
+- actualEndTime
+- ライブ未開始、配信終了、ライブ動画ではない、チャット無効、動画不明/アクセス不可の分類
 
 ### コメント取得
 
@@ -379,11 +388,20 @@ Socket.IO を同一 HTTP server 上の `/socket.io` で動かす。
 - liveChatEnded
 - liveChatDisabled
 - liveChatNotFound
+- liveNotStarted
+- liveEnded
+- videoNotFound
+- notLiveBroadcast
+- permissionDenied
 - unauthorized
+- parser
+- responseShape
 - network
 - unknown
 
-network 系のみ retryable として再接続する。quota、rate limit、認可エラー、チャット終了などは停止する。
+HTTP 5xx、408、`ECONNRESET`、`ETIMEDOUT`、socket/transport 系など明確な通信エラーだけ retryable として再接続する。quota、rate limit、認可エラー、チャット終了、parser/応答形式エラーなどは terminal error として停止する。
+
+`BroadcastStatus` は `errorKind`、`errorReason`、`errorPhase`、`errorAction`、`scheduledStartTime`、`actualStartTime`、`actualEndTime` を保持し、管理画面で次に取る操作を表示する。
 
 ## 9. データ管理
 
@@ -399,6 +417,9 @@ DB は使用しない。
 - reconnectTimer
 - streamGeneration
 - reconnectDelayMs
+- reconnectAttempt
+- maxReconnectAttempts
+- nextReconnectAt
 - broadcastStatus
 - youtubeStatus
 - overlayConnected
@@ -410,6 +431,7 @@ DB は使用しない。
 - 新着は内部配列の先頭へ追加
 - UI では古い順から新しい順へ見せる
 - dedupe は `platformMessageId` で行う
+- 300件を超える場合は、未表示 Super Chat、未表示の配信者/モデレーター/メンバー、未表示通常、表示済み重要、表示済み通常の順で優先保持する
 
 ### ローカル JSON
 
@@ -448,6 +470,9 @@ DB は使用しない。
 - settings
 - start broadcast payload
 - patch settings payload
+- test message payload
+
+壊れた JSON、空 body、body 読み取り失敗、schema 不一致は `parseJsonBody()` で `VALIDATION_ERROR` の 422 に統一する。`/api/test-message` だけは空 body を `{}` として通常テストコメント送信に使う。
 
 色文字列は現状 `string().min(1).max(80)` で、CSS color としての厳密検証はしていない。
 
@@ -498,6 +523,11 @@ Super Chat:
 - YouTube message mapping
 - stream parser
 - AppController stream lifecycle
+- broadcast start idempotency
+- reconnect limit
+- API JSON body parse error handling
+- YouTube OAuth refresh token status
+- Socket.IO admin/overlay sync split
 
 コマンド:
 
@@ -533,6 +563,15 @@ npm run test:e2e
 
 E2E は `/admin` と `/overlay/{overlayToken}` を開き、テストコメント、非表示、再表示、テストスパチャを確認する。
 
+2026-04-28 時点の確認:
+
+- `npm test`: 11 files / 62 tests passed
+- `npx tsc --noEmit --ignoreDeprecations 6.0`: passed
+- `npm run build`: passed
+- `npm run test:e2e -- tests/e2e/admin-overlay-smoke.spec.ts`: passed
+- `git diff --check`: passed
+- `npm run lint`: `eslint: command not found` のため未確認
+
 ## 13. 運用上の注意
 
 - ローカル PC の `localhost:3000` 前提で使う。
@@ -540,18 +579,13 @@ E2E は `/admin` と `/overlay/{overlayToken}` を開き、テストコメント
 - Google OAuth secret は `.env.local` に置く。
 - YouTube token は平文保存される。
 - quota 使用量は Google Cloud Console で監視する。
-- stream 再接続が短時間に繰り返される場合は手動で停止する。
+- stream 再接続は最大8回、初期2秒、最大60秒のバックオフで行う。短時間 close が5回続く場合はエラーとして停止する。
 - 依存の `latest` 固定は将来の破壊的変更リスクがある。
 
 ## 14. 既知の技術課題
 
-- `startBroadcast` のサーバー側冪等化が不十分
-- 配信開始リクエスト競合への保護が限定的
-- stream 再接続の回数上限がない
 - OAuth `state` 検証がない
-- YouTube disconnect 時に既存 stream を必ず停止する連動がない
 - `/api/youtube/status` は実 API 疎通確認ではない
-- 一部 route の JSON parse error が整形済み API error にならない可能性がある
 - 色入力の CSS 妥当性検証がない
 - npm/pnpm の運用方針が混在している
 - 依存バージョン固定が不十分
