@@ -26,7 +26,6 @@ OBSには `/overlay/{overlayToken}` のURLをBrowser Sourceとして登録する
 - OBSオーバーレイ画面
 - コメント一覧表示
 - テーマ設定
-- 表示秒数設定
 - 接続状態表示
 
 理由:
@@ -97,7 +96,6 @@ DBは使用しない。
 - 取得済みコメントID Set
 - 最新コメント一覧 100〜300件
 - 現在OBSに表示中のコメント
-- 固定表示状態
 - YouTube接続状態
 - OBS接続状態
 - コメント取得タイマー
@@ -112,7 +110,6 @@ DBは使用しない。
 
 settings.json:
 - overlayToken
-- displayDurationSec
 - theme
 - lastBroadcastUrl
 
@@ -229,7 +226,6 @@ OBS Browser Source設定例:
 - textColor
 - accentColor
 - animationType
-- displayDurationSec
 
 初期アニメーション:
 - fade-in
@@ -257,13 +253,10 @@ OBS Browser Source設定例:
 
 - React useState
 - Socket.IO events
-- setTimeoutによる表示タイマー
 
 用途:
 - 現在表示中コメント
-- 固定表示状態
 - テーマ設定
-- 表示タイマー
 
 ### サーバー側
 
@@ -280,7 +273,6 @@ OBS Browser Source設定例:
 - YouTube URL入力チェック
 - APIリクエストのバリデーション
 - テーマ設定値チェック
-- 表示秒数チェック
 - Socket.IO payloadチェック
 
 ## 12. セキュリティ
@@ -362,8 +354,6 @@ OBS Browser Source設定例:
 - Socket.IOイベント送受信
 - overlay:showイベント
 - overlay:hideイベント
-- overlay:pinイベント
-- 表示秒数タイマー
 - テーマ反映
 
 ## 16. ログ
@@ -501,11 +491,10 @@ OBS Browser Source設定例:
 
 ### Phase 5: 設定
 
-1. 表示秒数設定
-2. テーマ設定
-3. settings.json保存
-4. overlay:theme:update実装
-5. UI調整
+1. テーマ設定
+2. settings.json保存
+3. overlay:theme:update実装
+4. UI調整
 
 ### Phase 6: 仕上げ
 

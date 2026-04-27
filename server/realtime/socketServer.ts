@@ -57,8 +57,6 @@ export function attachSocketServer(httpServer: HttpServer) {
   appController.events.on("overlay:state", (state) => io?.emit(socketEvents.overlayState, state));
   appController.events.on("overlay:show", (state) => io?.emit(socketEvents.overlayShow, state));
   appController.events.on("overlay:hide", (state) => io?.emit(socketEvents.overlayHide, state));
-  appController.events.on("overlay:pin", (state) => io?.emit(socketEvents.overlayPin, state));
-  appController.events.on("overlay:unpin", (state) => io?.emit(socketEvents.overlayUnpin, state));
   appController.events.on("overlay:test", (state) => io?.emit(socketEvents.overlayTest, state));
   appController.events.on("overlay:theme:update", (settings) => io?.emit(socketEvents.overlayThemeUpdate, settings));
 

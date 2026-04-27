@@ -8,19 +8,11 @@ describe("validation defaults", () => {
     expect(normalizeTheme()).toEqual(defaultTheme);
   });
 
-  it("fills settings defaults for display duration and theme", () => {
+  it("fills settings defaults for theme", () => {
     const parsed = settingsSchema.parse({
       overlayToken: "x".repeat(24)
     });
 
-    expect(parsed.displayDurationSec).toBe(8);
     expect(parsed.theme).toEqual(defaultTheme);
-  });
-
-  it("enforces the display duration range", () => {
-    expect(settingsSchema.safeParse({ overlayToken: "x".repeat(24), displayDurationSec: 2 }).success).toBe(false);
-    expect(settingsSchema.safeParse({ overlayToken: "x".repeat(24), displayDurationSec: 3 }).success).toBe(true);
-    expect(settingsSchema.safeParse({ overlayToken: "x".repeat(24), displayDurationSec: 60 }).success).toBe(true);
-    expect(settingsSchema.safeParse({ overlayToken: "x".repeat(24), displayDurationSec: 61 }).success).toBe(false);
   });
 });

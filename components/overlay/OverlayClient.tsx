@@ -12,9 +12,7 @@ const compactBreakpoint = { width: 1600, height: 900 };
 type OverlayEventName =
   | "sync"
   | "show"
-  | "pin"
   | "hide"
-  | "unpin"
   | "test"
   | "theme";
 
@@ -23,8 +21,6 @@ type ServerToClientEvents = {
   [socketEvents.overlayState]: (state: OverlayState) => void;
   [socketEvents.overlayShow]: (state: OverlayState) => void;
   [socketEvents.overlayHide]: (state: OverlayState) => void;
-  [socketEvents.overlayPin]: (state: OverlayState) => void;
-  [socketEvents.overlayUnpin]: (state: OverlayState) => void;
   [socketEvents.overlayTest]: (state: OverlayState) => void;
   [socketEvents.overlayThemeUpdate]: (settings: Settings) => void;
 };
@@ -421,19 +417,16 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
     });
     socket.on(socketEvents.overlayState, (state) => applyOverlayState(state, "sync"));
     socket.on(socketEvents.overlayShow, (state) => applyOverlayState(state, "show"));
-    socket.on(socketEvents.overlayPin, (state) => applyOverlayState(state, "pin"));
     socket.on(socketEvents.overlayHide, (state) => {
       setOverlayState(state);
       setEventName("hide");
     });
-    socket.on(socketEvents.overlayUnpin, (state) => applyOverlayState(state, "unpin"));
     socket.on(socketEvents.overlayTest, (state) => applyOverlayState(state, "test"));
     socket.on(socketEvents.overlayThemeUpdate, (settings) => {
       setOverlayState((current) =>
         current
           ? {
               ...current,
-              displayDurationSec: settings.displayDurationSec,
               theme: settings.theme
             }
           : current

@@ -1,4 +1,4 @@
-import { Check, Copy, EyeOff, Pin, Play, Radio, Search, Settings } from "lucide-react";
+import { Check, Copy, EyeOff, Play, Radio, Search, Settings } from "lucide-react";
 import { overlayStylePresets } from "@/lib/themePresets";
 import type { Theme } from "@/types";
 
@@ -28,10 +28,6 @@ function MessageRow({ message, compact = false }: { message: (typeof messages)[n
             <button className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-zinc-950 px-3 text-xs font-semibold text-white">
               <Check className="h-3.5 w-3.5" />
               表示
-            </button>
-            <button className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-800">
-              <Pin className="h-3.5 w-3.5" />
-              固定
             </button>
             <button className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-zinc-500">
               <Copy className="h-3.5 w-3.5" />
@@ -228,8 +224,7 @@ export default function DesignSamplesPage() {
                   <p className="text-sm font-semibold">佐藤</p>
                   <p className="mt-2 text-lg leading-7">腰痛の人は寝る前に何を避けたらいいですか？</p>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <button className="h-10 rounded-lg bg-red-600 text-sm font-bold text-white">固定</button>
+                <div className="mt-3 grid gap-2">
                   <button className="h-10 rounded-lg border border-zinc-300 text-sm font-bold">隠す</button>
                 </div>
               </div>
@@ -247,7 +242,7 @@ export default function DesignSamplesPage() {
               <div className="mt-4 grid gap-2 text-sm text-zinc-300">
                 <span>Socket 接続済み</span>
                 <span>OBS 起動中</span>
-                <span>表示秒数 8秒</span>
+                <span>手動で非表示</span>
               </div>
             </aside>
             <div className="rounded-2xl bg-white p-3 text-zinc-950">
@@ -259,7 +254,6 @@ export default function DesignSamplesPage() {
               <p className="text-xs font-semibold text-zinc-400">クイック操作</p>
               <div className="mt-3 grid gap-2">
                 <button className="h-12 rounded-xl bg-red-600 font-bold">表示</button>
-                <button className="h-12 rounded-xl bg-amber-500 font-bold text-zinc-950">固定</button>
                 <button className="h-12 rounded-xl bg-zinc-800 font-bold">非表示</button>
               </div>
             </aside>
@@ -282,9 +276,6 @@ export default function DesignSamplesPage() {
             <aside className="grid content-start gap-3">
               <button className="h-14 rounded-2xl bg-zinc-950 text-base font-bold text-white">
                 選択コメントを表示
-              </button>
-              <button className="h-14 rounded-2xl bg-red-600 text-base font-bold text-white">
-                固定表示
               </button>
               <button className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-zinc-300 font-bold">
                 <EyeOff className="h-4 w-4" />

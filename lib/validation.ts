@@ -34,7 +34,6 @@ export const themeSchema = z.object({
 
 export const settingsSchema = z.object({
   overlayToken: z.string().min(24),
-  displayDurationSec: z.number().int().min(3).max(60).default(8),
   theme: themeSchema.default(defaultTheme),
   lastBroadcastUrl: z.string().optional()
 });
@@ -44,7 +43,6 @@ export const startBroadcastSchema = z.object({
 });
 
 export const patchSettingsSchema = z.object({
-  displayDurationSec: z.number().int().min(3).max(60).optional(),
   theme: themeSchema.partial().optional(),
   lastBroadcastUrl: z.string().optional()
 });

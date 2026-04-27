@@ -7,7 +7,6 @@ export async function GET() {
   const state = await appController.getState();
   return jsonOk({
     overlayToken: state.overlayToken,
-    displayDurationSec: state.overlay.displayDurationSec,
     theme: state.overlay.theme,
     lastBroadcastUrl: state.broadcastStatus.currentBroadcastUrl
   });

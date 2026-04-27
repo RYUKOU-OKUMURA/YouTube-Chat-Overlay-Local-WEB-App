@@ -1,5 +1,5 @@
 import { useMemo, type RefObject, type CSSProperties } from "react";
-import { Copy, Pin, Play, Search, ArrowDownToLine } from "lucide-react";
+import { Copy, Play, Search, ArrowDownToLine } from "lucide-react";
 import type { ChatMessage } from "@/types";
 import { Badge } from "@/components/common/Badge";
 import { Button } from "@/components/common/Button";
@@ -43,7 +43,6 @@ export function MessagePanel({
   autoscroll,
   setAutoscroll,
   onShowMessage,
-  onPinMessage,
   onCopyMessage,
   busyAction,
   listRef,
@@ -56,7 +55,6 @@ export function MessagePanel({
   autoscroll: boolean;
   setAutoscroll: (value: boolean) => void;
   onShowMessage: (message: ChatMessage) => void;
-  onPinMessage: (message: ChatMessage) => void;
   onCopyMessage: (message: ChatMessage) => void;
   busyAction: string | null;
   listRef: RefObject<HTMLDivElement | null>;
@@ -97,7 +95,17 @@ export function MessagePanel({
                 return (
                   <article
                     key={message.id}
-                    className={`group grid grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-xl border-l-4 px-3 py-3 transition ${
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onShowMessage(message)}
+                    onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onShowMessage(message);
+                      }
+                    }}
+                    className={`group grid cursor-pointer grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-xl border-l-4 px-3 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 ${
                       active ? "border-red-600 bg-red-50/70" : "border-transparent hover:bg-slate-50"
                     }`}
                   >
@@ -129,19 +137,13 @@ export function MessagePanel({
                         <Button
                           size="sm"
                           icon={<Play className="h-3.5 w-3.5" />}
-                          onClick={() => onShowMessage(message)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onShowMessage(message);
+                          }}
                           disabled={busyAction === `show-${message.id}`}
                         >
                           表示
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          icon={<Pin className="h-3.5 w-3.5" />}
-                          onClick={() => onPinMessage(message)}
-                          disabled={busyAction === `pin-${message.id}`}
-                        >
-                          固定
                         </Button>
                         <Button size="sm" variant="ghost" icon={<Copy className="h-3.5 w-3.5" />} onClick={(event) => { event.stopPropagation(); onCopyMessage(message); }}>
                           コピー

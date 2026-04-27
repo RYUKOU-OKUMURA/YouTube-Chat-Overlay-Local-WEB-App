@@ -34,8 +34,6 @@ export type ChatMessage = {
 
 export type OverlayState = {
   currentMessage: ChatMessage | null;
-  isPinned: boolean;
-  displayDurationSec: number;
   theme: Theme;
 };
 
@@ -82,7 +80,6 @@ export type ApiResponse<T> =
 
 export type Settings = {
   overlayToken: string;
-  displayDurationSec: number;
   theme: Theme;
   lastBroadcastUrl?: string;
 };
@@ -98,7 +95,6 @@ export type StartBroadcastInput = {
 };
 
 export type PatchSettingsInput = Partial<{
-  displayDurationSec: number;
   theme: Partial<Theme>;
   lastBroadcastUrl: string;
 }>;
@@ -130,8 +126,6 @@ export const socketEvents = {
   overlayState: "overlay:state",
   overlayShow: "overlay:show",
   overlayHide: "overlay:hide",
-  overlayPin: "overlay:pin",
-  overlayUnpin: "overlay:unpin",
   overlayThemeUpdate: "overlay:theme:update",
   overlayTest: "overlay:test"
 } as const;

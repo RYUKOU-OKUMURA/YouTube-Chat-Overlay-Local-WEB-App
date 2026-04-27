@@ -26,15 +26,12 @@ type DashboardState = {
 };
 
 type SettingsPatch = {
-  displayDurationSec?: number;
   theme?: Partial<Theme>;
   lastBroadcastUrl?: string;
 };
 
 const emptyOverlay: AppState["overlay"] = {
   currentMessage: null,
-  isPinned: false,
-  displayDurationSec: 8,
   theme: defaultTheme
 };
 
@@ -69,7 +66,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
           messages,
           overlay: {
             ...emptyOverlay,
-            displayDurationSec: settings.displayDurationSec,
             theme: settings.theme
           },
           youtubeStatus,
@@ -195,7 +191,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               overlayToken: next.overlayToken,
               overlay: {
                 ...prev.overlay,
-                displayDurationSec: next.displayDurationSec,
                 theme: next.theme
               },
               lastBroadcastUrl: next.lastBroadcastUrl ?? prev.lastBroadcastUrl
@@ -306,29 +301,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
     }
   }
 
-  async function pinMessage(message: ChatMessage) {
-    setBusyAction(`pin-${message.id}`);
-    try {
-      const next = await fetchJson<AppState["overlay"]>(`/api/messages/${message.id}/pin`, { method: "POST" });
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              messages: prev.messages.map((item) =>
-                item.id === message.id ? { ...item, displayedAt: next.currentMessage?.displayedAt ?? new Date().toISOString() } : item
-              ),
-              overlay: next
-            }
-          : prev
-      );
-      setNotice("コメントを固定表示しました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "コメントを固定表示できませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   async function hideOverlay() {
     setBusyAction("hide");
     try {
@@ -337,19 +309,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
       setNotice("OBS表示を非表示にしました。");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "OBS表示を非表示にできませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function unpinOverlay() {
-    setBusyAction("unpin");
-    try {
-      const next = await fetchJson<AppState["overlay"]>("/api/overlay/unpin", { method: "POST" });
-      setState((prev) => (prev ? { ...prev, overlay: next } : prev));
-      setNotice("固定表示を解除しました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "固定表示を解除できませんでした。");
     } finally {
       setBusyAction(null);
     }
@@ -453,7 +412,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               autoscroll={autoscroll}
               setAutoscroll={setAutoscroll}
               onShowMessage={showMessage}
-              onPinMessage={pinMessage}
               onCopyMessage={copyMessage}
               busyAction={busyAction}
               listRef={listRef}
@@ -462,7 +420,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
             <OverlayPanel
               overlay={state.overlay}
               onHide={hideOverlay}
-              onUnpin={unpinOverlay}
               onCopyMessage={() => {
                 if (state.overlay.currentMessage) void copyMessage(state.overlay.currentMessage);
               }}
@@ -485,7 +442,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               <OverlayPanel
                 overlay={state.overlay}
                 onHide={hideOverlay}
-                onUnpin={unpinOverlay}
                 onCopyMessage={() => {
                   if (state.overlay.currentMessage) void copyMessage(state.overlay.currentMessage);
                 }}
@@ -493,7 +449,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               />
             </div>
             <SettingsPanel
-              settings={{ displayDurationSec: state.overlay.displayDurationSec, theme: state.overlay.theme }}
+              settings={{ theme: state.overlay.theme }}
               onPatchSettings={patchSettings}
             />
           </div>

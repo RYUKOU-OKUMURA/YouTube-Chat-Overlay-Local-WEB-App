@@ -21,7 +21,6 @@ async function writeJsonAtomic(filePath: string, value: unknown) {
 export function createDefaultSettings(): Settings {
   return {
     overlayToken: createOverlayToken(),
-    displayDurationSec: 8,
     theme: defaultTheme
   };
 }

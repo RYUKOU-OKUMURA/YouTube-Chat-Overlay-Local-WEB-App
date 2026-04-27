@@ -23,8 +23,6 @@ type AppEvents = {
   "overlay:state": [OverlayState];
   "overlay:show": [OverlayState];
   "overlay:hide": [OverlayState];
-  "overlay:pin": [OverlayState];
-  "overlay:unpin": [OverlayState];
   "overlay:test": [OverlayState];
   "overlay:theme:update": [Settings];
   "overlay:connected": [{ connected: boolean; connectedAt?: string }];
@@ -51,7 +49,6 @@ class AppController {
   private fetchedMessageIds = new Set<string>();
   private nextPageToken: string | undefined;
   private pollTimer: NodeJS.Timeout | null = null;
-  private overlayHideTimer: NodeJS.Timeout | null = null;
   private broadcastStatus: BroadcastStatus = { isFetchingComments: false };
   private youtubeStatus: YouTubeStatus = { oauth: "unauthorized", api: "disconnected" };
   private overlayConnected = false;
@@ -64,8 +61,6 @@ class AppController {
     this.settings = await readSettings();
     this.overlayState = {
       currentMessage: null,
-      isPinned: false,
-      displayDurationSec: this.settings.displayDurationSec,
       theme: this.settings.theme
     };
     this.broadcastStatus = {
@@ -145,10 +140,8 @@ class AppController {
     const message = this.findMessage(messageId);
     this.overlayState = {
       ...this.overlayState,
-      currentMessage: { ...message, displayedAt: new Date().toISOString() },
-      isPinned: false
+      currentMessage: { ...message, displayedAt: new Date().toISOString() }
     };
-    this.scheduleOverlayAutoHide();
     this.markDisplayed(messageId);
     this.events.emit("overlay:show", this.overlayState);
     this.events.emit("overlay:state", this.overlayState);
@@ -156,46 +149,13 @@ class AppController {
     return this.overlayState;
   }
 
-  async pinMessage(messageId: string) {
-    await this.init();
-    const message = this.findMessage(messageId);
-    this.overlayState = {
-      ...this.overlayState,
-      currentMessage: { ...message, displayedAt: new Date().toISOString() },
-      isPinned: true
-    };
-    this.stopOverlayHideTimer();
-    this.markDisplayed(messageId);
-    this.events.emit("overlay:pin", this.overlayState);
-    this.events.emit("overlay:state", this.overlayState);
-    await this.emitSync();
-    return this.overlayState;
-  }
-
   async hideOverlay() {
     await this.init();
-    this.stopOverlayHideTimer();
     this.overlayState = {
       ...this.overlayState,
-      currentMessage: null,
-      isPinned: false
+      currentMessage: null
     };
     this.events.emit("overlay:hide", this.overlayState);
-    this.events.emit("overlay:state", this.overlayState);
-    await this.emitSync();
-    return this.overlayState;
-  }
-
-  async unpinOverlay() {
-    await this.init();
-    const currentMessage = this.overlayState.currentMessage;
-    this.overlayState = {
-      ...this.overlayState,
-      currentMessage: currentMessage ? { ...currentMessage, displayedAt: new Date().toISOString() } : null,
-      isPinned: false
-    };
-    this.scheduleOverlayAutoHide();
-    this.events.emit("overlay:unpin", this.overlayState);
     this.events.emit("overlay:state", this.overlayState);
     await this.emitSync();
     return this.overlayState;
@@ -219,10 +179,8 @@ class AppController {
     this.ingestMessages([message]);
     this.overlayState = {
       ...this.overlayState,
-      currentMessage: { ...message, displayedAt: new Date().toISOString() },
-      isPinned: false
+      currentMessage: { ...message, displayedAt: new Date().toISOString() }
     };
-    this.scheduleOverlayAutoHide();
     this.events.emit("overlay:test", this.overlayState);
     this.events.emit("overlay:state", this.overlayState);
     await this.emitSync();
@@ -237,10 +195,8 @@ class AppController {
     });
     this.overlayState = {
       ...this.overlayState,
-      displayDurationSec: this.settings.displayDurationSec,
       theme: this.settings.theme
     };
-    this.scheduleOverlayAutoHide();
     this.events.emit("overlay:theme:update", this.settings);
     this.events.emit("overlay:state", this.overlayState);
     await this.emitSync();
@@ -315,24 +271,6 @@ class AppController {
     if (this.pollTimer) {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
-    }
-  }
-
-  private scheduleOverlayAutoHide() {
-    this.stopOverlayHideTimer();
-    if (!this.overlayState.currentMessage || this.overlayState.isPinned) {
-      return;
-    }
-
-    this.overlayHideTimer = setTimeout(() => {
-      void this.hideOverlay();
-    }, this.overlayState.displayDurationSec * 1000);
-  }
-
-  private stopOverlayHideTimer() {
-    if (this.overlayHideTimer) {
-      clearTimeout(this.overlayHideTimer);
-      this.overlayHideTimer = null;
     }
   }
 
