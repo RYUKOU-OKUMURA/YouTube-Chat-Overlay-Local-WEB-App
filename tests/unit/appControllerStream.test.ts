@@ -142,9 +142,45 @@ describe("AppController stream lifecycle", () => {
       expect((await controller.getState()).broadcastStatus).toMatchObject({
         isFetchingComments: false,
         connectionState: "error",
+        errorKind: "quotaExceeded",
+        errorPhase: "stream",
         error: "YouTube API quota has been exceeded."
       });
     });
+  });
+
+  test("does not reconnect terminal parser errors", async () => {
+    vi.useFakeTimers();
+    const parserError = {
+      classified: {
+        kind: "parser",
+        message: "YouTubeライブチャットのJSON応答が途中で終了しました。",
+        retryable: false,
+        reason: "incomplete_stream_json",
+        phase: "stream",
+        action: "コメント取得を停止しました。"
+      }
+    };
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      throw parserError;
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => {
+      expect((await controller.getState()).broadcastStatus).toMatchObject({
+        isFetchingComments: false,
+        connectionState: "error",
+        errorKind: "parser",
+        errorReason: "incomplete_stream_json",
+        errorAction: "コメント取得を停止しました。"
+      });
+    });
+
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(mocks.streamLiveChatMessages).toHaveBeenCalledTimes(1);
   });
 
   test("marks live chat ended errors as ended", async () => {
@@ -167,6 +203,8 @@ describe("AppController stream lifecycle", () => {
       expect((await controller.getState()).broadcastStatus).toMatchObject({
         isFetchingComments: false,
         connectionState: "ended",
+        errorKind: "liveChatEnded",
+        errorPhase: "stream",
         error: "The YouTube live chat has ended."
       });
     });
@@ -277,7 +315,9 @@ describe("AppController stream lifecycle", () => {
       expect((await controller.getState()).broadcastStatus).toMatchObject({
         isFetchingComments: false,
         connectionState: "error",
-        error: "Live chat stream closed too quickly too many times."
+        errorKind: "network",
+        errorReason: "short_stream_close_limit",
+        error: "YouTubeライブチャットのストリーム接続が短時間で繰り返し終了しました。"
       });
     });
     expect(calls).toHaveLength(5);
@@ -311,7 +351,9 @@ describe("AppController stream lifecycle", () => {
         connectionState: "error",
         reconnectAttempt: 8,
         maxReconnectAttempts: 8,
-        error: "Live chat stream could not reconnect."
+        errorKind: "network",
+        errorReason: "max_reconnect_attempts_exceeded",
+        error: "YouTubeライブチャットへ再接続できませんでした。"
       });
     });
     expect(calls).toHaveLength(9);

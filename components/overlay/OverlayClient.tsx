@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Crown, Sparkles } from "lucide-react";
 import { io, type Socket } from "socket.io-client";
 import { getSuperChatTier } from "@/lib/superChat";
-import type { AppState, OverlayState, Settings, ChatMessage, Theme } from "@/types";
+import type { OverlayState, ChatMessage, Theme } from "@/types";
 import { socketEvents } from "@/types";
 
 const desktopViewportSize = { width: 1920, height: 1080 };
@@ -20,12 +20,13 @@ type OverlayEventName =
   | "theme";
 
 type ServerToClientEvents = {
-  [socketEvents.stateSync]: (state: AppState) => void;
+  [socketEvents.stateSync]: (state: unknown) => void;
+  [socketEvents.overlaySync]: (state: OverlayState) => void;
   [socketEvents.overlayState]: (state: OverlayState) => void;
   [socketEvents.overlayShow]: (state: OverlayState) => void;
   [socketEvents.overlayHide]: (state: OverlayState) => void;
   [socketEvents.overlayTest]: (state: OverlayState) => void;
-  [socketEvents.overlayThemeUpdate]: (settings: Settings) => void;
+  [socketEvents.overlayThemeUpdate]: (payload: { theme: Theme }) => void;
 };
 
 type ClientToServerEvents = {
@@ -36,6 +37,14 @@ type ClientToServerEvents = {
 type OverlayClientProps = {
   overlayToken: string;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isOverlayState(value: unknown): value is OverlayState {
+  return isRecord(value) && "currentMessage" in value && isRecord(value.theme);
+}
 
 function messageKey(message: ChatMessage) {
   return `${message.id}:${message.displayedAt ?? message.publishedAt}`;
@@ -626,9 +635,11 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
     };
 
     socket.on("connect", subscribe);
+    socket.on(socketEvents.overlaySync, (state) => applyOverlayState(state, "sync"));
     socket.on(socketEvents.stateSync, (state) => {
-      setOverlayState(state.overlay);
-      setEventName("sync");
+      if (isRecord(state) && isOverlayState(state.overlay)) {
+        applyOverlayState(state.overlay, "sync");
+      }
     });
     socket.on(socketEvents.overlayState, (state) => applyOverlayState(state, "sync"));
     socket.on(socketEvents.overlayShow, (state) => applyOverlayState(state, "show"));
@@ -637,12 +648,12 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
       setEventName("hide");
     });
     socket.on(socketEvents.overlayTest, (state) => applyOverlayState(state, "test"));
-    socket.on(socketEvents.overlayThemeUpdate, (settings) => {
+    socket.on(socketEvents.overlayThemeUpdate, ({ theme }) => {
       setOverlayState((current) =>
         current
           ? {
               ...current,
-              theme: settings.theme
+              theme
             }
           : current
       );

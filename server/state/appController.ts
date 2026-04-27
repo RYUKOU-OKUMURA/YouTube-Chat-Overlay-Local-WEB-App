@@ -1,5 +1,10 @@
 import { EventEmitter } from "node:events";
-import { classifyYouTubeError, getLiveChatInfo, streamLiveChatMessages } from "@/server/youtube/api";
+import {
+  classifyYouTubeError,
+  getLiveChatInfo,
+  streamLiveChatMessages,
+  type ClassifiedYouTubeError
+} from "@/server/youtube/api";
 import { parseYouTubeVideoId } from "@/server/youtube/parseYouTubeUrl";
 import { getYouTubeStatus } from "@/server/youtube/oauth";
 import { patchSettings, readSettings } from "@/server/settings/settingsStore";
@@ -45,6 +50,43 @@ const maxReconnectDelayMs = 60000;
 const maxReconnectAttempts = 8;
 const maxShortStreamCloses = 5;
 const shortStreamCloseMs = 5000;
+
+function clearBroadcastErrorFields(): Partial<BroadcastStatus> {
+  return {
+    error: undefined,
+    errorKind: undefined,
+    errorReason: undefined,
+    errorPhase: undefined,
+    errorAction: undefined
+  };
+}
+
+function broadcastErrorFields(
+  error: ClassifiedYouTubeError,
+  fallbackPhase: NonNullable<BroadcastStatus["errorPhase"]>
+): Partial<BroadcastStatus> {
+  const fields: Partial<BroadcastStatus> = {
+    error: error.message,
+    errorKind: error.kind,
+    errorReason: error.reason,
+    errorPhase: error.phase ?? fallbackPhase,
+    errorAction: error.action
+  };
+  if (error.scheduledStartTime) {
+    fields.scheduledStartTime = error.scheduledStartTime;
+  }
+  if (error.actualStartTime) {
+    fields.actualStartTime = error.actualStartTime;
+  }
+  if (error.actualEndTime) {
+    fields.actualEndTime = error.actualEndTime;
+  }
+  return fields;
+}
+
+function terminalConnectionState(error: ClassifiedYouTubeError): BroadcastStatus["connectionState"] {
+  return error.kind === "liveChatEnded" || error.kind === "liveEnded" ? "ended" : "error";
+}
 
 export class AppController {
   readonly events = new TypedEmitter();
@@ -152,7 +194,15 @@ export class AppController {
   }
 
   private async startBroadcastNow(input: StartBroadcastInput, videoId: string, requestGeneration: number) {
-    const info = await getLiveChatInfo(videoId);
+    let info: Awaited<ReturnType<typeof getLiveChatInfo>>;
+    try {
+      info = await getLiveChatInfo(videoId);
+    } catch (error) {
+      if (requestGeneration === this.startRequestGeneration && this.canPublishStartFailure(videoId)) {
+        await this.publishStartFailure(input.broadcastUrl, videoId, classifyYouTubeError(error));
+      }
+      throw error;
+    }
     if (requestGeneration !== this.startRequestGeneration) {
       return this.broadcastStatus;
     }
@@ -181,7 +231,10 @@ export class AppController {
       liveChatId: info.liveChatId,
       streamTitle: info.streamTitle,
       channelName: info.channelName,
-      error: undefined
+      scheduledStartTime: info.scheduledStartTime,
+      actualStartTime: info.actualStartTime,
+      actualEndTime: info.actualEndTime,
+      ...clearBroadcastErrorFields()
     };
     this.events.emit("broadcast:status", this.broadcastStatus);
     await this.emitSync();
@@ -198,7 +251,7 @@ export class AppController {
       isFetchingComments: false,
       connectionMode: "stream",
       connectionState: "stopped",
-      error: undefined
+      ...clearBroadcastErrorFields()
     };
     this.events.emit("broadcast:status", this.broadcastStatus);
     await this.emitSync();
@@ -293,6 +346,27 @@ export class AppController {
     await this.emitSync();
   }
 
+  private canPublishStartFailure(videoId: string) {
+    return !this.broadcastStatus.isFetchingComments || this.broadcastStatus.currentVideoId === videoId;
+  }
+
+  private async publishStartFailure(broadcastUrl: string, videoId: string, error: ClassifiedYouTubeError) {
+    this.resetActiveStream();
+    this.broadcastStatus = {
+      isFetchingComments: false,
+      connectionMode: "stream",
+      connectionState: terminalConnectionState(error),
+      reconnectAttempt: 0,
+      maxReconnectAttempts,
+      nextReconnectAt: undefined,
+      currentBroadcastUrl: broadcastUrl,
+      currentVideoId: videoId,
+      ...broadcastErrorFields(error, "liveChatInfo")
+    };
+    this.events.emit("broadcast:status", this.broadcastStatus);
+    await this.emitSync();
+  }
+
   private async consumeLiveChatStream(generation: number) {
     const liveChatId = this.broadcastStatus.liveChatId;
     if (!this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments || !liveChatId) {
@@ -332,7 +406,8 @@ export class AppController {
           nextReconnectAt: undefined,
           lastFetchedAt: now,
           lastReceivedAt: now,
-          error: undefined
+          actualEndTime: batch.offlineAt ?? this.broadcastStatus.actualEndTime,
+          ...clearBroadcastErrorFields()
         };
         this.events.emit("broadcast:status", this.broadcastStatus);
         await this.emitSync();
@@ -346,7 +421,14 @@ export class AppController {
       if (this.isCurrentStream(generation) && !abortController.signal.aborted) {
         this.clearCurrentAbortController(abortController);
         if (this.registerShortStreamClose(receivedBatch, streamStartedAt)) {
-          await this.stopForStreamError("Live chat stream closed too quickly too many times.");
+          await this.stopForStreamError({
+            kind: "network",
+            message: "YouTubeライブチャットのストリーム接続が短時間で繰り返し終了しました。",
+            retryable: false,
+            reason: "short_stream_close_limit",
+            phase: "stream",
+            action: "配信がライブ中か、YouTube Studioでチャットが有効かを確認してから再開してください。"
+          });
           return;
         }
         await this.scheduleStreamReconnect(generation);
@@ -359,7 +441,7 @@ export class AppController {
 
       const classified = classifyYouTubeError(error);
       if (classified.retryable) {
-        await this.scheduleStreamReconnect(generation);
+        await this.scheduleStreamReconnect(generation, classified);
         return;
       }
 
@@ -367,22 +449,30 @@ export class AppController {
         ...this.broadcastStatus,
         isFetchingComments: false,
         connectionMode: "stream",
-        connectionState: classified.kind === "liveChatEnded" ? "ended" : "error",
-        error: classified.message
+        connectionState: terminalConnectionState(classified),
+        nextReconnectAt: undefined,
+        ...broadcastErrorFields(classified, "stream")
       };
       this.events.emit("broadcast:status", this.broadcastStatus);
       await this.emitSync();
     }
   }
 
-  private async scheduleStreamReconnect(generation: number) {
+  private async scheduleStreamReconnect(generation: number, cause?: ClassifiedYouTubeError) {
     if (!this.isCurrentStream(generation) || !this.broadcastStatus.liveChatId) {
       return;
     }
 
     const reconnectAttempt = (this.broadcastStatus.reconnectAttempt ?? 0) + 1;
     if (reconnectAttempt > maxReconnectAttempts) {
-      await this.stopForStreamError("Live chat stream could not reconnect.");
+      await this.stopForStreamError({
+        kind: "network",
+        message: "YouTubeライブチャットへ再接続できませんでした。",
+        retryable: false,
+        reason: "max_reconnect_attempts_exceeded",
+        phase: "stream",
+        action: "配信URL、YouTube側のライブ状態、ネットワーク接続を確認してから再開してください。"
+      });
       return;
     }
 
@@ -397,7 +487,7 @@ export class AppController {
       reconnectAttempt,
       maxReconnectAttempts,
       nextReconnectAt,
-      error: undefined
+      ...(cause ? broadcastErrorFields(cause, "stream") : clearBroadcastErrorFields())
     };
     this.events.emit("broadcast:status", this.broadcastStatus);
     await this.emitSync();
@@ -506,7 +596,7 @@ export class AppController {
     return this.shortStreamCloseCount >= maxShortStreamCloses;
   }
 
-  private async stopForStreamError(error: string) {
+  private async stopForStreamError(error: ClassifiedYouTubeError) {
     this.resetActiveStream();
     this.broadcastStatus = {
       ...this.broadcastStatus,
@@ -514,7 +604,7 @@ export class AppController {
       connectionMode: "stream",
       connectionState: "error",
       nextReconnectAt: undefined,
-      error
+      ...broadcastErrorFields(error, "stream")
     };
     this.events.emit("broadcast:status", this.broadcastStatus);
     await this.emitSync();

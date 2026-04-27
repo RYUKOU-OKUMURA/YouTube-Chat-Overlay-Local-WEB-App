@@ -62,6 +62,28 @@ export type BroadcastStatus = {
   lastFetchedAt?: string;
   lastReceivedAt?: string;
   error?: string;
+  errorKind?:
+    | "quotaExceeded"
+    | "rateLimitExceeded"
+    | "liveChatEnded"
+    | "liveChatDisabled"
+    | "liveChatNotFound"
+    | "liveNotStarted"
+    | "liveEnded"
+    | "videoNotFound"
+    | "notLiveBroadcast"
+    | "permissionDenied"
+    | "unauthorized"
+    | "parser"
+    | "responseShape"
+    | "network"
+    | "unknown";
+  errorReason?: string;
+  errorPhase?: "liveChatInfo" | "stream" | "request";
+  errorAction?: string;
+  scheduledStartTime?: string;
+  actualStartTime?: string;
+  actualEndTime?: string;
 };
 
 export type AppState = {
@@ -79,6 +101,11 @@ export type ApiErrorCode =
   | "YOUTUBE_UNAUTHORIZED"
   | "INVALID_BROADCAST_URL"
   | "LIVE_CHAT_NOT_FOUND"
+  | "LIVE_NOT_STARTED"
+  | "LIVE_ENDED"
+  | "LIVE_CHAT_DISABLED"
+  | "YOUTUBE_PERMISSION_DENIED"
+  | "YOUTUBE_RESPONSE_ERROR"
   | "YOUTUBE_API_ERROR"
   | "MESSAGE_NOT_FOUND"
   | "VALIDATION_ERROR"
@@ -136,6 +163,7 @@ export const socketEvents = {
   overlaySubscribe: "overlay:subscribe",
   requestSync: "state:request-sync",
   stateSync: "state:sync",
+  overlaySync: "overlay:sync",
   commentNew: "comment:new",
   youtubeStatus: "youtube:status",
   broadcastStatus: "broadcast:status",

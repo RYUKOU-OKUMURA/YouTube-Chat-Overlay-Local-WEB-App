@@ -48,6 +48,11 @@ export const patchSettingsSchema = z.object({
   lastBroadcastUrl: z.string().optional()
 });
 
+export const testMessageSchema = z.object({
+  kind: z.enum(["normal", "superChat"]).optional(),
+  amountText: z.string().optional()
+});
+
 export function normalizeTheme(theme?: Partial<Theme>): Theme {
   return themeSchema.parse({ ...defaultTheme, ...theme });
 }

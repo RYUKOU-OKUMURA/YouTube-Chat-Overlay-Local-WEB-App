@@ -13,20 +13,39 @@ function apiLabel(value: YouTubeStatus["api"]) {
   return "未接続";
 }
 
-function streamLabel(value: BroadcastStatus["connectionState"]) {
-  if (value === "connecting") return "stream接続中";
-  if (value === "connected") return "stream接続済み";
-  if (value === "reconnecting") return "stream再接続中";
-  if (value === "ended") return "stream終了";
-  if (value === "error") return "streamエラー";
+function streamErrorLabel(value: BroadcastStatus["errorKind"]) {
+  if (value === "liveNotStarted") return "ライブ未開始";
+  if (value === "liveEnded" || value === "liveChatEnded") return "配信終了";
+  if (value === "liveChatDisabled" || value === "liveChatNotFound") return "チャット無効";
+  if (value === "videoNotFound") return "動画不明";
+  if (value === "notLiveBroadcast") return "ライブURL確認";
+  if (value === "permissionDenied" || value === "unauthorized") return "権限エラー";
+  if (value === "parser" || value === "responseShape") return "応答形式エラー";
+  if (value === "quotaExceeded" || value === "rateLimitExceeded") return "API利用量エラー";
+  if (value === "network") return "通信エラー";
+  return null;
+}
+
+function streamLabel(status: BroadcastStatus) {
+  const errorLabel = streamErrorLabel(status.errorKind);
+  if (errorLabel && status.connectionState !== "reconnecting") return errorLabel;
+  if (status.connectionState === "connecting") return "stream接続中";
+  if (status.connectionState === "connected") return "stream接続済み";
+  if (status.connectionState === "reconnecting") return "stream再接続中";
+  if (status.connectionState === "ended") return "stream終了";
+  if (status.connectionState === "error") return "streamエラー";
   return "stream停止中";
 }
 
-function streamTone(value: BroadcastStatus["connectionState"]) {
-  if (value === "connected") return "blue";
-  if (value === "connecting" || value === "reconnecting") return "amber";
-  if (value === "error") return "rose";
-  if (value === "ended") return "green";
+function streamTone(status: BroadcastStatus) {
+  if (status.errorKind === "liveNotStarted" || status.errorKind === "liveEnded" || status.errorKind === "liveChatEnded") {
+    return "amber";
+  }
+  if (status.errorKind) return "rose";
+  if (status.connectionState === "connected") return "blue";
+  if (status.connectionState === "connecting" || status.connectionState === "reconnecting") return "amber";
+  if (status.connectionState === "error") return "rose";
+  if (status.connectionState === "ended") return "green";
   return "slate";
 }
 
@@ -53,7 +72,7 @@ export function ConnectionStrip({
       <Badge tone={needsReconnect ? "amber" : youtubeStatus.oauth === "authorized" ? "green" : "amber"}>
         {needsReconnect ? "再接続推奨" : `${oauthLabel(youtubeStatus.oauth)} / ${apiLabel(youtubeStatus.api)}`}
       </Badge>
-      <Badge tone={streamTone(broadcastStatus.connectionState)}>{streamLabel(broadcastStatus.connectionState)}</Badge>
+      <Badge tone={streamTone(broadcastStatus)}>{streamLabel(broadcastStatus)}</Badge>
       {lastSyncLabel ? (
         <span className="inline-flex items-center gap-1 text-slate-500">
           <Clock3 className="h-3.5 w-3.5" />

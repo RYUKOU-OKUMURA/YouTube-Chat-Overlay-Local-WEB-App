@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { Copy, MonitorCog, RefreshCcw, SlidersHorizontal, TestTube2, BadgeJapaneseYen } from "lucide-react";
 import type { AppState, BroadcastStatus, ChatMessage, Settings, Theme, YouTubeStatus } from "@/types";
-import { defaultTheme, socketEvents } from "@/types";
+import { socketEvents } from "@/types";
 import { Button } from "@/components/common/Button";
 import { Panel } from "@/components/common/Panel";
 import { fetchJson } from "./api";
@@ -30,10 +30,7 @@ type SettingsPatch = {
   lastBroadcastUrl?: string;
 };
 
-const emptyOverlay: AppState["overlay"] = {
-  currentMessage: null,
-  theme: defaultTheme
-};
+const socketSyncFallbackDelayMs = 1200;
 
 function isImportantMessage(message: ChatMessage) {
   return message.isSuperChat || message.isMember || message.isModerator || message.isOwner;
@@ -51,40 +48,42 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const socketSyncVersionRef = useRef(0);
   const listRef = useRef<HTMLDivElement | null>(null);
+
+  const applyAppState = useCallback((nextState: AppState) => {
+    const nextBroadcastUrl = nextState.broadcastStatus.currentBroadcastUrl ?? "";
+    setLastSyncedAt(new Date().toISOString());
+    setState((prev) => ({
+      ...(prev ?? {}),
+      overlayToken: nextState.overlayToken,
+      messages: nextState.messages,
+      overlay: nextState.overlay,
+      youtubeStatus: nextState.youtubeStatus,
+      broadcastStatus: nextState.broadcastStatus,
+      overlayConnected: nextState.overlayConnected,
+      lastBroadcastUrl: nextBroadcastUrl || prev?.lastBroadcastUrl
+    }));
+    setBroadcastUrl((current) => current || nextBroadcastUrl);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
+    let socketSyncReceived = false;
+    const fallbackController = new AbortController();
 
-    async function loadInitialState() {
+    async function loadFallbackState() {
+      if (socketSyncReceived) return;
+      const syncVersion = socketSyncVersionRef.current;
       try {
-        const [settings, messages, youtubeStatus, broadcastStatus] = await Promise.all([
-          fetchJson<Settings>("/api/settings"),
-          fetchJson<ChatMessage[]>("/api/messages"),
-          fetchJson<YouTubeStatus>("/api/youtube/status"),
-          fetchJson<BroadcastStatus>("/api/broadcast/status")
-        ]);
-
-        if (!mounted) return;
-        setState({
-          overlayToken: settings.overlayToken,
-          messages,
-          overlay: {
-            ...emptyOverlay,
-            theme: settings.theme
-          },
-          youtubeStatus,
-          broadcastStatus,
-          overlayConnected: false,
-          lastBroadcastUrl: settings.lastBroadcastUrl
-        });
-        setBroadcastUrl(settings.lastBroadcastUrl ?? "");
+        const nextState = await fetchJson<AppState>("/api/state", { signal: fallbackController.signal });
+        if (!mounted || socketSyncReceived || syncVersion !== socketSyncVersionRef.current) return;
+        applyAppState(nextState);
       } catch (error) {
+        if (!mounted || socketSyncReceived || fallbackController.signal.aborted) return;
         setNotice(error instanceof Error ? error.message : "管理画面の状態を読み込めませんでした。");
       }
     }
-
-    void loadInitialState();
 
     const socket = io({
       path: "/socket.io",
@@ -103,37 +102,24 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
     });
 
     socket.on(socketEvents.stateSync, (nextState: AppState) => {
-      setLastSyncedAt(new Date().toISOString());
-      setState((prev) => {
-        if (!prev) {
-          return {
-            overlayToken: nextState.overlayToken,
-            messages: nextState.messages,
-            overlay: nextState.overlay,
-            youtubeStatus: nextState.youtubeStatus,
-            broadcastStatus: nextState.broadcastStatus,
-            overlayConnected: nextState.overlayConnected,
-            lastBroadcastUrl: undefined
-          };
-        }
-        return {
-          ...prev,
-          overlayToken: nextState.overlayToken,
-          messages: nextState.messages,
-          overlay: nextState.overlay,
-          youtubeStatus: nextState.youtubeStatus,
-          broadcastStatus: nextState.broadcastStatus,
-          overlayConnected: nextState.overlayConnected
-        };
-      });
+      socketSyncReceived = true;
+      socketSyncVersionRef.current += 1;
+      fallbackController.abort();
+      applyAppState(nextState);
     });
+
+    const fallbackTimer = window.setTimeout(() => {
+      void loadFallbackState();
+    }, socketSyncFallbackDelayMs);
 
     return () => {
       mounted = false;
+      window.clearTimeout(fallbackTimer);
+      fallbackController.abort();
       socket.disconnect();
       socketRef.current = null;
     };
-  }, []);
+  }, [applyAppState]);
 
   useEffect(() => {
     if (!autoscroll || !listRef.current) return;
@@ -179,13 +165,17 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   }, [commentView, searchMatchedMessages]);
 
   async function syncStatus() {
+    const socket = socketRef.current;
+    if (socket?.connected) {
+      socket.emit(socketEvents.requestSync);
+      return;
+    }
+
+    const syncVersion = socketSyncVersionRef.current;
     try {
-      const [youtubeStatus, broadcastStatus] = await Promise.all([
-        fetchJson<YouTubeStatus>("/api/youtube/status"),
-        fetchJson<BroadcastStatus>("/api/broadcast/status")
-      ]);
-      setState((prev) => (prev ? { ...prev, youtubeStatus, broadcastStatus } : prev));
-      setLastSyncedAt(new Date().toISOString());
+      const nextState = await fetchJson<AppState>("/api/state");
+      if (syncVersion !== socketSyncVersionRef.current) return;
+      applyAppState(nextState);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "同期に失敗しました。");
     }

@@ -1,5 +1,6 @@
 import type { Readable } from "node:stream";
-import { google, youtube_v3 } from "googleapis";
+import { google } from "googleapis";
+import type { youtube_v3 } from "googleapis";
 import { getAuthorizedClient } from "@/server/youtube/oauth";
 import type { ChatMessage } from "@/types";
 
@@ -8,6 +9,9 @@ export type LiveChatInfo = {
   liveChatId: string;
   streamTitle?: string;
   channelName?: string;
+  scheduledStartTime?: string;
+  actualStartTime?: string;
+  actualEndTime?: string;
 };
 
 export type LiveChatStreamBatch = {
@@ -29,15 +33,100 @@ export type YouTubeApiErrorKind =
   | "liveChatEnded"
   | "liveChatDisabled"
   | "liveChatNotFound"
+  | "liveNotStarted"
+  | "liveEnded"
+  | "videoNotFound"
+  | "notLiveBroadcast"
+  | "permissionDenied"
   | "unauthorized"
+  | "parser"
+  | "responseShape"
   | "network"
   | "unknown";
+
+export type YouTubeErrorPhase = "liveChatInfo" | "stream" | "request";
 
 export type ClassifiedYouTubeError = {
   kind: YouTubeApiErrorKind;
   message: string;
   retryable: boolean;
+  reason?: string;
+  phase?: YouTubeErrorPhase;
+  action?: string;
+  status?: number;
+  scheduledStartTime?: string;
+  actualStartTime?: string;
+  actualEndTime?: string;
 };
+
+type YouTubeDiagnosticErrorInput = {
+  kind: YouTubeApiErrorKind;
+  message: string;
+  reason: string;
+  phase: YouTubeErrorPhase;
+  action: string;
+  retryable?: boolean;
+  status?: number;
+  scheduledStartTime?: string;
+  actualStartTime?: string;
+  actualEndTime?: string;
+};
+
+export class YouTubeDiagnosticError extends Error {
+  readonly kind: YouTubeApiErrorKind;
+  readonly reason: string;
+  readonly phase: YouTubeErrorPhase;
+  readonly action: string;
+  readonly retryable: boolean;
+  readonly status?: number;
+  readonly scheduledStartTime?: string;
+  readonly actualStartTime?: string;
+  readonly actualEndTime?: string;
+
+  constructor(input: YouTubeDiagnosticErrorInput) {
+    super(input.message);
+    this.name = "YouTubeDiagnosticError";
+    this.kind = input.kind;
+    this.reason = input.reason;
+    this.phase = input.phase;
+    this.action = input.action;
+    this.retryable = input.retryable ?? false;
+    this.status = input.status;
+    this.scheduledStartTime = input.scheduledStartTime;
+    this.actualStartTime = input.actualStartTime;
+    this.actualEndTime = input.actualEndTime;
+  }
+}
+
+export class YouTubeStreamParserError extends YouTubeDiagnosticError {
+  constructor(message = "YouTubeライブチャットの応答を読み取れませんでした。", reason = "invalid_stream_json") {
+    super({
+      kind: "parser",
+      message,
+      reason,
+      phase: "stream",
+      action: "コメント取得を停止しました。配信を再開する前に、YouTube側の一時的な応答異常が続いていないか確認してください。",
+      retryable: false,
+      status: 502
+    });
+    this.name = "YouTubeStreamParserError";
+  }
+}
+
+export class YouTubeStreamResponseShapeError extends YouTubeDiagnosticError {
+  constructor(message = "YouTubeライブチャットの応答形式が想定と異なります。", reason = "invalid_stream_response_shape") {
+    super({
+      kind: "responseShape",
+      message,
+      reason,
+      phase: "stream",
+      action: "コメント取得を停止しました。しばらくしても続く場合はYouTube APIの応答仕様変更を確認してください。",
+      retryable: false,
+      status: 502
+    });
+    this.name = "YouTubeStreamResponseShapeError";
+  }
+}
 
 export async function getLiveChatInfo(videoId: string): Promise<LiveChatInfo> {
   const auth = await getAuthorizedClient();
@@ -47,15 +136,86 @@ export async function getLiveChatInfo(videoId: string): Promise<LiveChatInfo> {
     id: [videoId]
   });
   const item = response.data.items?.[0];
-  const liveChatId = item?.liveStreamingDetails?.activeLiveChatId;
+  if (!item) {
+    throw new YouTubeDiagnosticError({
+      kind: "videoNotFound",
+      message: "YouTube動画が見つからないか、このアカウントからアクセスできません。",
+      reason: "video_not_found_or_inaccessible",
+      phase: "liveChatInfo",
+      action: "URLが正しいか、限定公開・非公開動画へのアクセス権があるか確認してください。",
+      status: 404
+    });
+  }
+
+  const liveChatId = item.liveStreamingDetails?.activeLiveChatId;
+  const scheduledStartTime = item.liveStreamingDetails?.scheduledStartTime ?? undefined;
+  const actualStartTime = item.liveStreamingDetails?.actualStartTime ?? undefined;
+  const actualEndTime = item.liveStreamingDetails?.actualEndTime ?? undefined;
+  const liveBroadcastContent = item.snippet?.liveBroadcastContent;
+
+  if (actualEndTime) {
+    throw new YouTubeDiagnosticError({
+      kind: "liveEnded",
+      message: "このYouTubeライブはすでに終了しています。",
+      reason: "live_broadcast_ended",
+      phase: "liveChatInfo",
+      action: "現在配信中のライブURLを入力してください。",
+      status: 410,
+      scheduledStartTime,
+      actualStartTime,
+      actualEndTime
+    });
+  }
+
+  if (liveBroadcastContent === "upcoming" || (scheduledStartTime && !actualStartTime)) {
+    throw new YouTubeDiagnosticError({
+      kind: "liveNotStarted",
+      message: "このYouTubeライブはまだ開始されていません。",
+      reason: "live_broadcast_not_started",
+      phase: "liveChatInfo",
+      action: "配信開始後にもう一度コメント取得を開始してください。",
+      status: 409,
+      scheduledStartTime,
+      actualStartTime,
+      actualEndTime
+    });
+  }
+
+  if (liveBroadcastContent === "none" && !item.liveStreamingDetails) {
+    throw new YouTubeDiagnosticError({
+      kind: "notLiveBroadcast",
+      message: "このURLはライブ配信の動画ではありません。",
+      reason: "not_live_broadcast",
+      phase: "liveChatInfo",
+      action: "YouTubeライブ配信ページのURLを入力してください。",
+      status: 400,
+      scheduledStartTime,
+      actualStartTime,
+      actualEndTime
+    });
+  }
+
   if (!liveChatId) {
-    throw new Error("activeLiveChatId was not found. The stream may be offline or chat may be disabled.");
+    throw new YouTubeDiagnosticError({
+      kind: "liveChatDisabled",
+      message: "ライブ配信は取得できますが、ライブチャットが有効ではありません。",
+      reason: "active_live_chat_id_missing",
+      phase: "liveChatInfo",
+      action: "YouTube Studioでライブチャットが有効になっているか確認してください。",
+      status: 409,
+      scheduledStartTime,
+      actualStartTime,
+      actualEndTime
+    });
   }
   return {
     videoId,
     liveChatId,
     streamTitle: item.snippet?.title ?? undefined,
-    channelName: item.snippet?.channelTitle ?? undefined
+    channelName: item.snippet?.channelTitle ?? undefined,
+    scheduledStartTime,
+    actualStartTime,
+    actualEndTime
   };
 }
 
@@ -129,24 +289,52 @@ export class JsonObjectStreamParser {
       const end = findCompleteJsonObjectEnd(this.buffer);
       if (end === null) {
         if (flush) {
-          throw new Error("YouTube stream returned incomplete or invalid JSON.");
+          throw new YouTubeStreamParserError(
+            "YouTubeライブチャットのJSON応答が途中で終了しました。",
+            "incomplete_stream_json"
+          );
         }
         return values;
       }
 
       const raw = this.buffer.slice(0, end + 1);
-      values.push(JSON.parse(raw));
+      try {
+        values.push(JSON.parse(raw));
+      } catch {
+        throw new YouTubeStreamParserError(
+          "YouTubeライブチャットのJSON応答を解析できませんでした。",
+          "invalid_stream_json"
+        );
+      }
       this.buffer = this.buffer.slice(end + 1);
     }
   }
 }
 
 export function classifyYouTubeError(error: unknown): ClassifiedYouTubeError {
+  if (isYouTubeDiagnosticError(error)) {
+    return {
+      kind: error.kind,
+      message: error.message,
+      retryable: error.retryable,
+      reason: error.reason,
+      phase: error.phase,
+      action: error.action,
+      status: error.status,
+      scheduledStartTime: error.scheduledStartTime,
+      actualStartTime: error.actualStartTime,
+      actualEndTime: error.actualEndTime
+    };
+  }
+
   if (isAbortError(error)) {
     return {
       kind: "network",
-      message: "YouTube stream connection was aborted.",
-      retryable: false
+      message: "YouTubeライブチャットへの接続を停止しました。",
+      retryable: false,
+      reason: "aborted",
+      phase: "stream",
+      action: "ユーザー操作または内部処理により停止されています。"
     };
   }
 
@@ -156,57 +344,98 @@ export function classifyYouTubeError(error: unknown): ClassifiedYouTubeError {
   if (reason === "quotaExceeded") {
     return {
       kind: "quotaExceeded",
-      message: "YouTube API quota has been exceeded. Wait for the daily reset or increase the quota in Google Cloud Console.",
-      retryable: false
+      message: "YouTube APIの利用上限に達しました。",
+      retryable: false,
+      reason,
+      phase: "request",
+      action: "Google Cloud Consoleで割り当てを確認するか、上限がリセットされるまで待ってください。",
+      status: getErrorStatus(error) ?? 429
     };
   }
   if (reason === "rateLimitExceeded") {
     return {
       kind: "rateLimitExceeded",
-      message: "YouTube live chat requests are being sent too quickly. Comment streaming has been stopped.",
-      retryable: false
+      message: "YouTubeライブチャットへのリクエストが短時間に集中しています。",
+      retryable: false,
+      reason,
+      phase: "request",
+      action: "少し時間をおいてからコメント取得を再開してください。",
+      status: getErrorStatus(error) ?? 429
     };
   }
   if (reason === "liveChatEnded" || message.toLowerCase().includes("live chat ended")) {
     return {
       kind: "liveChatEnded",
-      message: "The YouTube live chat has ended.",
-      retryable: false
+      message: "YouTubeライブチャットは終了しています。",
+      retryable: false,
+      reason: reason ?? "liveChatEnded",
+      phase: "stream",
+      action: "配信が終了している場合は、コメント取得を停止したままで問題ありません。",
+      status: getErrorStatus(error) ?? 410
     };
   }
   if (reason === "liveChatDisabled") {
     return {
       kind: "liveChatDisabled",
-      message: "Live chat is disabled for this broadcast.",
-      retryable: false
+      message: "この配信ではライブチャットが無効です。",
+      retryable: false,
+      reason,
+      phase: "request",
+      action: "YouTube Studioでライブチャット設定を確認してください。",
+      status: getErrorStatus(error) ?? 409
     };
   }
   if (reason === "liveChatNotFound") {
     return {
       kind: "liveChatNotFound",
-      message: "The YouTube live chat could not be found.",
-      retryable: false
+      message: "YouTubeライブチャットが見つかりません。",
+      retryable: false,
+      reason,
+      phase: "request",
+      action: "配信が開始済みで、チャットが有効なライブURLか確認してください。",
+      status: getErrorStatus(error) ?? 404
     };
   }
-  if (isUnauthorizedYouTubeError(error, reason, message)) {
+  if (isPermissionDeniedYouTubeError(error, reason, message)) {
+    return {
+      kind: "permissionDenied",
+      message: "YouTube APIの権限が不足しています。",
+      retryable: false,
+      reason: reason ?? "permission_denied",
+      phase: "request",
+      action: "YouTube連携を解除して再接続し、必要な権限を許可してください。",
+      status: getErrorStatus(error) ?? 403
+    };
+  }
+  if (isUnauthorizedYouTubeError(error, reason)) {
     return {
       kind: "unauthorized",
-      message: "YouTube authorization is invalid, expired, or missing required permissions. Reconnect YouTube OAuth.",
-      retryable: false
+      message: "YouTube連携の認証が無効、または期限切れです。",
+      retryable: false,
+      reason: reason ?? "unauthorized",
+      phase: "request",
+      action: "管理画面からYouTube連携をやり直してください。",
+      status: getErrorStatus(error) ?? 401
     };
   }
   if (isNetworkLikeError(error)) {
     return {
       kind: "network",
-      message: "YouTube stream connection was interrupted. Reconnecting...",
-      retryable: true
+      message: "YouTubeライブチャットへの接続が一時的に切断されました。",
+      retryable: true,
+      reason: extractNetworkReason(error) ?? "network_error",
+      phase: "stream",
+      action: "自動で再接続します。そのまましばらくお待ちください。",
+      status: getErrorStatus(error)
     };
   }
 
   return {
     kind: "unknown",
     message,
-    retryable: false
+    retryable: false,
+    reason: reason ?? undefined,
+    status: getErrorStatus(error)
   };
 }
 
@@ -234,7 +463,16 @@ export function mapLiveChatMessage(item: youtube_v3.Schema$LiveChatMessage): Cha
 
 function normalizeStreamResponse(value: unknown): youtube_v3.Schema$LiveChatMessageListResponse {
   if (!isRecord(value)) {
-    throw new Error("YouTube stream returned a non-object response.");
+    throw new YouTubeStreamResponseShapeError(
+      "YouTubeライブチャットの応答がオブジェクトではありません。",
+      "stream_response_not_object"
+    );
+  }
+  if ("items" in value && !Array.isArray(value.items)) {
+    throw new YouTubeStreamResponseShapeError(
+      "YouTubeライブチャットのメッセージ一覧が配列ではありません。",
+      "stream_items_not_array"
+    );
   }
 
   return {
@@ -367,7 +605,11 @@ function getErrorStatus(error: unknown) {
   return typeof status === "number" ? status : undefined;
 }
 
-function isUnauthorizedYouTubeError(error: unknown, reason: string | null, message: string) {
+function isYouTubeDiagnosticError(error: unknown): error is YouTubeDiagnosticError {
+  return error instanceof YouTubeDiagnosticError;
+}
+
+function isUnauthorizedYouTubeError(error: unknown, reason: string | null) {
   const status = getErrorStatus(error);
   if (status === 401 || reason === "invalid_grant") {
     return true;
@@ -375,17 +617,29 @@ function isUnauthorizedYouTubeError(error: unknown, reason: string | null, messa
   if (reason && unauthorizedYouTubeErrorReasons.has(reason)) {
     return true;
   }
+  return false;
+}
+
+function isPermissionDeniedYouTubeError(error: unknown, reason: string | null, message: string) {
+  const status = getErrorStatus(error);
   if (status !== 403) {
     return false;
   }
+  if (reason && permissionDeniedYouTubeErrorReasons.has(reason)) {
+    return true;
+  }
   const text = `${reason ?? ""} ${message}`.toLowerCase();
-  return text.includes("permission") || text.includes("scope") || text.includes("auth");
+  return text.includes("permission") || text.includes("scope");
 }
 
 const unauthorizedYouTubeErrorReasons = new Set([
   "authError",
   "authorizationRequired",
-  "insufficientAuthentication",
+  "insufficientAuthentication"
+]);
+
+const permissionDeniedYouTubeErrorReasons = new Set([
+  "forbidden",
   "insufficientPermission",
   "insufficientPermissions"
 ]);
@@ -395,11 +649,80 @@ function isAbortError(error: unknown) {
 }
 
 function isNetworkLikeError(error: unknown) {
+  const status = getErrorStatus(error);
+  if (typeof status === "number" && (status >= 500 || status === 408)) {
+    return true;
+  }
+
+  const reason = extractYouTubeErrorReason(error);
+  if (reason && retryableYouTubeErrorReasons.has(reason)) {
+    return true;
+  }
+
+  const code = extractNetworkReason(error);
+  if (code && retryableNetworkCodes.has(code.toUpperCase())) {
+    return true;
+  }
+
   if (error instanceof Error) {
     const text = `${error.name} ${error.message}`.toLowerCase();
-    return text.includes("network") || text.includes("socket") || text.includes("stream") || text.includes("fetch failed");
+    return retryableNetworkMessageFragments.some((fragment) => text.includes(fragment));
   }
   return false;
+}
+
+const retryableYouTubeErrorReasons = new Set(["backendError", "internalError", "serviceUnavailable"]);
+
+const retryableNetworkCodes = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "EPIPE",
+  "ERR_NETWORK",
+  "ERR_SOCKET_CLOSED",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT"
+]);
+
+const retryableNetworkMessageFragments = [
+  "network error",
+  "socket",
+  "fetch failed",
+  "connection reset",
+  "connection refused",
+  "connection closed",
+  "connection terminated",
+  "connect timeout",
+  "read timeout",
+  "request timeout",
+  "timed out",
+  "timeout",
+  "econnreset",
+  "econnrefused",
+  "econnaborted",
+  "etimedout",
+  "eai_again",
+  "enotfound",
+  "epipe",
+  "tls",
+  "transport"
+];
+
+function extractNetworkReason(error: unknown): string | undefined {
+  const code = isRecord(error) ? readString(error.code) : null;
+  if (code) {
+    return code;
+  }
+  const cause = isRecord(error) ? error.cause : undefined;
+  if (isRecord(cause)) {
+    return readString(cause.code) ?? undefined;
+  }
+  return undefined;
 }
 
 function readString(value: unknown) {

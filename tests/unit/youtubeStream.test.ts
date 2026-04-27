@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { JsonObjectStreamParser, parseLiveChatStreamResponses } from "@/server/youtube/api";
+import {
+  JsonObjectStreamParser,
+  YouTubeStreamParserError,
+  YouTubeStreamResponseShapeError,
+  parseLiveChatStreamResponses
+} from "@/server/youtube/api";
 
 async function* chunks(values: Array<Buffer | string>) {
   for (const value of values) {
@@ -53,6 +58,15 @@ describe("YouTube live chat stream parser", () => {
     const parser = new JsonObjectStreamParser();
 
     expect(parser.push('{"items":[')).toEqual([]);
-    expect(() => parser.flush()).toThrow("incomplete or invalid JSON");
+    expect(() => parser.flush()).toThrow(YouTubeStreamParserError);
+  });
+
+  test("throws terminal response shape errors for invalid list responses", async () => {
+    await expect(async () => {
+      for await (const response of parseLiveChatStreamResponses(chunks(['{"items":{"id":"message-1"}}']))) {
+        expect(response).toBeDefined();
+        // Exhaust the async iterator so parser errors surface in the assertion.
+      }
+    }).rejects.toThrow(YouTubeStreamResponseShapeError);
   });
 });
