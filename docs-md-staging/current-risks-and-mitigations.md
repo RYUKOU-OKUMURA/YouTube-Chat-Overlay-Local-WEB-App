@@ -11,7 +11,7 @@
 - そのうち約 15 人が継続的にコメントする。
 - 配信者は管理画面でコメントを拾い、OBS オーバーレイへポップアップ表示しながら会話する。
 
-結論として、現在のコメント取得方式は `liveChatMessages.list` の短間隔 polling ではなく `liveChat.messages.stream` なので、2 時間配信でコメントを受け続ける設計方針としては妥当です。初回調査時点で最大の不安だった「開始処理の競合」「再接続の暴走」「OAuth/接続解除との状態不整合」「未表示コメントを拾いきる操作性」は、2026-04-28 時点で優先対応ぶんを実装済みです。
+結論として、現在のコメント取得方式は `liveChatMessages.list` の短間隔 polling ではなく `liveChat.messages.stream` なので、2 時間配信でコメントを受け続ける設計方針としては妥当です。初回調査時点で最大の不安だった「開始処理の競合」「再接続の暴走」「OAuth/接続解除との状態不整合」「未表示コメントを拾いきる操作性」に加え、早めに直したい P1/P2 の「parser/応答形式エラー分類」「ライブ状態の文言改善」「初期 REST と Socket sync の競合」「Socket 全体同期の絞り込み」「不正 JSON の API エラー整形」も 2026-04-28 時点で実装済みです。
 
 ## 優先度の見方
 
@@ -32,21 +32,22 @@
 
 実装確認:
 
-- `npm test`: 8 files / 35 tests passed
+- `npm test`: 11 files / 62 tests passed
 - `npx tsc --noEmit --ignoreDeprecations 6.0`: passed
 - `npm run build`: passed
 - `npm run test:e2e -- tests/e2e/admin-overlay-smoke.spec.ts`: passed
+- `git diff --check`: passed
 - `npm run lint`: `eslint: command not found` のため未確認
 
 ## 今すぐの P0 ではないが早めに直したいこと
 
-| 優先度 | 対応 | 影響 | 実装方針 |
-| --- | --- | --- | --- |
-| P1 | parser/応答形式エラーを network 再接続と分ける | JSON parse や normalize 不整合まで retryable 扱いになると、実装不整合で再接続を繰り返す可能性がある。 | parser 系は terminal error に分類する。ネットワーク断、abort、YouTube terminal error、parser error を別表示にする。 |
-| P1 | ライブ未開始・終了・チャット無効の文言改善 | `activeLiveChatId was not found` だけだと、配信者が何を直せばよいか分かりにくい。 | `videos.list` の取得結果と YouTube API reason から、未開始、終了済み、チャット無効、権限不足を分けて表示する。 |
-| P2 | 初期 REST 読み込みと Socket sync の競合整理 | 管理画面ロード直後に古い REST 結果が新しい Socket 状態を上書きすると、OBS 接続や表示中コメントが一瞬ずれる可能性がある。 | 初期状態取得を Socket `state:sync` 中心に寄せる。REST 結果には受信時刻を持たせ、古い結果で新しい状態を上書きしない。 |
-| P2 | Socket の全体同期を少し絞る | `state:sync` は最大 300 件の messages を全体 emit している。ローカル利用では大問題ではないが、OBS 側には不要な情報が多い。 | admin には全 state、overlay には overlay state と theme 中心に分ける。`comment:new` は admin room のみで維持する。 |
-| P2 | 不正 JSON の API エラー整形 | 空 body や壊れた JSON で route 例外になる可能性がある。通常利用では起きにくいが、保守性は落ちる。 | `request.json()` を try/catch 内に寄せ、`VALIDATION_ERROR` を返す共通 helper を作る。 |
+| 状況 | 優先度 | 対応 | 影響 | 実装内容 |
+| --- | --- | --- | --- | --- |
+| 実装済み | P1 | parser/応答形式エラーを network 再接続と分ける | JSON parse や normalize 不整合まで retryable 扱いになると、実装不整合で再接続を繰り返す可能性があった。 | `YouTubeStreamParserError` と `YouTubeStreamResponseShapeError` を追加し、parser/応答形式エラーは `retryable: false` の terminal error として停止するようにした。`stream` という文字列だけでは network 扱いにせず、HTTP 5xx、408、`ECONNRESET`、`ETIMEDOUT`、socket/transport 系など明確な通信エラーだけ再接続対象にした。`BroadcastStatus` に `errorKind`、`errorReason`、`errorPhase`、`errorAction` を追加し、管理画面で「応答形式エラー」「通信エラー」などを分けて表示する。 |
+| 実装済み | P1 | ライブ未開始・終了・チャット無効の文言改善 | `activeLiveChatId was not found` だけだと、配信者が何を直せばよいか分かりにくかった。 | `videos.list` の `snippet.liveBroadcastContent` と `liveStreamingDetails` から、動画不明/アクセス不可、ライブ未開始、終了済み、ライブ動画ではない、ライブチャット無効を判定するようにした。`scheduledStartTime`、`actualStartTime`、`actualEndTime` も `BroadcastStatus` に保持し、管理画面の配信パネルに「ライブ未開始」「配信終了」「チャット確認」「YouTube認可確認」などの日本語案内と次に取る操作を表示する。開始 API は `LIVE_NOT_STARTED`、`LIVE_ENDED`、`LIVE_CHAT_DISABLED`、`YOUTUBE_PERMISSION_DENIED`、`YOUTUBE_RESPONSE_ERROR` などの code/status を返す。 |
+| 実装済み | P2 | 初期 REST 読み込みと Socket sync の競合整理 | 管理画面ロード直後に古い REST 結果が新しい Socket 状態を上書きすると、OBS 接続や表示中コメントが一瞬ずれる可能性があった。 | 管理画面の初期状態は Socket `state:sync` を正本に寄せた。Socket sync が一定時間届かない場合だけ `/api/state` の full snapshot を fallback として読む。Socket sync 受信後は fallback を abort し、遅れて返った REST 結果で状態を巻き戻さないようにした。手動の再同期も Socket 接続中は `state:request-sync` を使い、未接続時だけ `/api/state` に fallback する。 |
+| 実装済み | P2 | Socket の全体同期を少し絞る | `state:sync` は最大 300 件の messages を全体 emit していた。ローカル利用では大問題ではないが、OBS 側には不要な情報が多かった。 | Socket を admin room と overlay room に分けた。`state:sync` は admin の full `AppState` 専用にし、overlay には新規 `overlay:sync` で `OverlayState` だけを送る。overlay には `messages`、`youtubeStatus`、`broadcastStatus`、`overlayToken` を送らない。`overlay:theme:update` も `Settings` 全体ではなく `{ theme }` だけを送る。`comment:new`、YouTube status、broadcast status、overlay connected は admin room のみに維持した。 |
+| 実装済み | P2 | 不正 JSON の API エラー整形 | 空 body や壊れた JSON で route 例外になる可能性があった。通常利用では起きにくいが、保守性は落ちていた。 | `lib/http.ts` に zod schema 付き `parseJsonBody()` を追加した。壊れた JSON、空 body、body 読み取り失敗、schema 不一致は `VALIDATION_ERROR` の 422 へ統一し、`SyntaxError` の詳細は外へ出さない。`/api/broadcast/start`、`/api/settings`、`/api/test-message` に適用した。`/api/test-message` だけは従来どおり空 body を `{}` として通常テストコメント送信に使う。 |
 
 ## 後回しでよいこと
 
@@ -88,11 +89,12 @@ API 使用量が増える主因:
 1. 実装済み: `startBroadcast` をサーバー側で冪等化し、開始処理を直列化する。
 2. 実装済み: stream 再接続に上限、短時間 close 検知、明確な停止エラーを入れる。
 3. 実装済み: YouTube 接続解除時に stream を停止し、broadcast status を整合させる。
-4. 一部実装済み: 認可エラー分類は改善済み。parser/ライブ状態の詳細分類は未対応。
+4. 実装済み: 認可エラー分類、parser/応答形式エラー、ライブ状態の詳細分類を分けて表示する。
 5. 実装済み: 未表示コメント、Super Chat、重要コメントを流しにくいキュー設計にする。
 6. 実装済み: 配信前チェックとして refresh token 有無、token 期限、認可エラー案内を整える。
-7. 未対応: Socket 同期と初期ロードの状態競合を整理する。
-8. 未対応: 依存固定、OAuth `state`、不正 JSON、設定入力 UX を後続で改善する。
+7. 実装済み: Socket 同期と初期ロードの状態競合を整理し、overlay 向け Socket payload を最小化する。
+8. 実装済み: 不正 JSON の API エラーを `VALIDATION_ERROR` へ整形する。
+9. 未対応: 依存固定、OAuth `state`、設定入力 UX を後続で改善する。
 
 ## 確認済み事項
 
@@ -102,4 +104,4 @@ API 使用量が増える主因:
 - Socket の状態同期や `/api/broadcast/status` は YouTube API を叩いていない。
 - コメント一覧はメモリ上で最大 300 件。
 - OBS への表示は自動ではなく、管理画面で選択したコメントを表示する仕様。
-- `npm test`、型チェック、production build は成功確認済み。`npm run lint` はローカルで `eslint: command not found` となり未確認。
+- `npm test`、型チェック、production build、admin/overlay smoke e2e は成功確認済み。`npm run lint` はローカルで `eslint: command not found` となり未確認。
