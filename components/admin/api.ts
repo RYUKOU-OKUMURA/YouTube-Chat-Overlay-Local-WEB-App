@@ -7,7 +7,13 @@ export async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit)
     },
     cache: "no-store"
   });
-  const payload = (await response.json()) as { ok?: boolean; data?: T; error?: { message?: string } };
+  const text = await response.text();
+  let payload: { ok?: boolean; data?: T; error?: { message?: string } };
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(text || `Request failed with ${response.status}`);
+  }
   if (!response.ok || payload.ok === false) {
     throw new Error(payload.error?.message ?? `Request failed with ${response.status}`);
   }

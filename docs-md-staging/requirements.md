@@ -300,7 +300,7 @@ URL:
 ### FR-005 OBS 表示
 
 - 配信者がコメントを表示すると、サーバーは overlay state の currentMessage を更新する。
-- Socket.IO で overlay:show と overlay:state を配信する。
+- Socket.IO で overlay:show を配信する。
 - OBS オーバーレイは currentMessage をコメントカードとして表示する。
 - 表示したコメントは自動で消えない。
 - 次のコメントを表示すると置き換わる。
@@ -310,7 +310,7 @@ URL:
 
 - 配信者は現在表示中のコメントを非表示にできる。
 - 非表示時は currentMessage を null にする。
-- Socket.IO で overlay:hide と overlay:state を配信する。
+- Socket.IO で overlay:hide を配信する。
 - OBS オーバーレイはカードを消す。
 
 ### FR-007 テスト表示
@@ -427,7 +427,6 @@ URL:
 - `youtube:status`
 - `broadcast:status`
 - `overlay:connected`
-- `overlay:state`
 - `overlay:show`
 - `overlay:hide`
 - `overlay:theme:update`
@@ -441,7 +440,7 @@ URL:
 
 - overlayToken
 - messages
-- fetchedMessageIds
+- fetchedMessageIds / fetchedMessageIdQueue
 - nextPageToken
 - current overlay state
 - YouTube status

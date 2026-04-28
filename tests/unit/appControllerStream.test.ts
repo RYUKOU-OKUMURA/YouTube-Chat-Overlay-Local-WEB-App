@@ -367,7 +367,7 @@ describe("AppController stream lifecycle", () => {
     expect(calls).toHaveLength(9);
   });
 
-  test("resets reconnect counters and delay when a normal batch is received", async () => {
+  test("resets reconnect counters and delay only after a stable stream", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-27T12:00:00.000Z"));
     const calls: Array<{ pageToken?: string }> = [];
@@ -380,6 +380,7 @@ describe("AppController stream lifecycle", () => {
     mocks.streamLiveChatMessages.mockImplementation(async function* (input: { pageToken?: string }) {
       calls.push(input);
       if (calls.length === 2) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
         yield { messages: [message("after-reconnect")], nextPageToken: "token-after-reconnect" };
       }
     });
@@ -399,6 +400,7 @@ describe("AppController stream lifecycle", () => {
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     await vi.advanceTimersByTimeAsync(2000);
     await vi.waitFor(() => expect(calls).toHaveLength(2));
+    await vi.advanceTimersByTimeAsync(5000);
     await vi.waitFor(() => expect(statuses).toContainEqual(expect.objectContaining({ connectionState: "connected" })));
 
     const connectedStatus = statuses.find((status) => status.connectionState === "connected");
@@ -481,6 +483,24 @@ describe("AppController stream lifecycle", () => {
     expect(mocks.getViewerMetrics).toHaveBeenCalledTimes(1);
   });
 
+  test("reuses current viewer metrics during manual refresh cooldown", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-27T12:00:00.000Z"));
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    const startStatus = await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    const refreshStatus = await controller.refreshViewerMetrics();
+
+    expect(refreshStatus).toBe(startStatus);
+    expect(mocks.getViewerMetrics).not.toHaveBeenCalled();
+    await controller.stopBroadcast();
+  });
+
   test("keeps viewer metrics errors out of the comment stream lifecycle", async () => {
     vi.useFakeTimers();
     mocks.getViewerMetrics.mockRejectedValue(new Error("viewer metrics failed"));
@@ -509,6 +529,8 @@ describe("AppController stream lifecycle", () => {
   });
 
   test("deduplicates manual viewer metric refreshes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-27T12:00:00.000Z"));
     const metrics = deferred<{
       concurrentViewers: number;
       checkedAt: string;
@@ -523,6 +545,7 @@ describe("AppController stream lifecycle", () => {
     const controller = new AppController();
 
     await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    vi.setSystemTime(new Date("2026-04-27T12:03:01.000Z"));
     const firstRefresh = controller.refreshViewerMetrics();
     const secondRefresh = controller.refreshViewerMetrics();
     await vi.waitFor(() => expect(mocks.getViewerMetrics).toHaveBeenCalledTimes(1));

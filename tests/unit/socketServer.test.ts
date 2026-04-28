@@ -193,14 +193,18 @@ describe("socket server role-aware sync", () => {
     expect(appController.setOverlayConnected).toHaveBeenCalledWith(true);
   });
 
-  test("routes state:sync as full admin sync and overlay-only sync", async () => {
+  test("routes state:sync as full admin sync without pushing redundant overlay sync", async () => {
     const baseUrl = await startSocketServer();
     const adminClient = await subscribeAdmin(baseUrl);
     const overlayClient = await subscribeOverlay(baseUrl);
 
     let leakedOverlayStateSync: unknown;
+    let redundantOverlaySync: unknown;
     overlayClient.on(socketEvents.stateSync, (payload) => {
       leakedOverlayStateSync = payload;
+    });
+    overlayClient.on(socketEvents.overlaySync, (payload) => {
+      redundantOverlaySync = payload;
     });
 
     const nextOverlay = makeOverlayState({
@@ -212,13 +216,12 @@ describe("socket server role-aware sync", () => {
     });
 
     const adminSyncPromise = onceSocketEvent<AppState>(adminClient, socketEvents.stateSync);
-    const overlaySyncPromise = onceSocketEvent<OverlayState>(overlayClient, socketEvents.overlaySync);
     appController.events.emit("state:sync", currentState);
 
     expect(await adminSyncPromise).toEqual(currentState);
-    expect(await overlaySyncPromise).toEqual(nextOverlay);
     await delay(30);
     expect(leakedOverlayStateSync).toBeUndefined();
+    expect(redundantOverlaySync).toBeUndefined();
   });
 
   test("uses socket role for state:request-sync", async () => {

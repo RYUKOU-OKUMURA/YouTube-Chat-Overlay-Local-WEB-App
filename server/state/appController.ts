@@ -9,6 +9,11 @@ import {
 import { parseYouTubeVideoId } from "@/server/youtube/parseYouTubeUrl";
 import { getYouTubeStatus } from "@/server/youtube/oauth";
 import { patchSettings, readSettings } from "@/server/settings/settingsStore";
+import {
+  maxFetchedMessageIds,
+  maxRetainedSuperChats,
+  prioritizeRetainedMessages
+} from "@/lib/messageRetention";
 import { normalizeTheme } from "@/lib/validation";
 import type {
   AppState,
@@ -28,7 +33,6 @@ type AppEvents = {
   "comment:new": [ChatMessage];
   "youtube:status": [YouTubeStatus];
   "broadcast:status": [BroadcastStatus];
-  "overlay:state": [OverlayState];
   "overlay:show": [OverlayState];
   "overlay:hide": [OverlayState];
   "overlay:test": [OverlayState];
@@ -46,9 +50,8 @@ class TypedEmitter extends EventEmitter {
   }
 }
 
-const maxMessages = 300;
-const maxSuperChats = 100;
 const viewerMetricsIntervalSeconds = 180;
+const viewerMetricsIntervalMs = viewerMetricsIntervalSeconds * 1000;
 const initialReconnectDelayMs = 2000;
 const maxReconnectDelayMs = 60000;
 const maxReconnectAttempts = 8;
@@ -100,7 +103,7 @@ function idleViewerMetrics(): ViewerMetrics {
 }
 
 function nextViewerMetricsRefreshAt(from = Date.now()) {
-  return new Date(from + viewerMetricsIntervalSeconds * 1000).toISOString();
+  return new Date(from + viewerMetricsIntervalMs).toISOString();
 }
 
 function viewerMetricsFromValue({
@@ -139,6 +142,7 @@ export class AppController {
   private messages: ChatMessage[] = [];
   private superChats: ChatMessage[] = [];
   private fetchedMessageIds = new Set<string>();
+  private fetchedMessageIdQueue: string[] = [];
   private nextPageToken: string | undefined;
   private streamAbortController: AbortController | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -265,6 +269,7 @@ export class AppController {
     this.reconnectDelayMs = initialReconnectDelayMs;
     this.shortStreamCloseCount = 0;
     this.fetchedMessageIds.clear();
+    this.fetchedMessageIdQueue = [];
     this.messages = [];
     this.superChats = [];
     this.settings = nextSettings;
@@ -345,6 +350,9 @@ export class AppController {
     if (!videoId || !this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments) {
       return this.broadcastStatus;
     }
+    if (manual && this.isViewerMetricsRefreshCoolingDown()) {
+      return this.broadcastStatus;
+    }
 
     try {
       const result = await getViewerMetrics(videoId);
@@ -396,6 +404,16 @@ export class AppController {
     }
   }
 
+  private isViewerMetricsRefreshCoolingDown() {
+    const checkedAt = this.broadcastStatus.viewerMetrics?.checkedAt;
+    if (!checkedAt) {
+      return false;
+    }
+
+    const checkedAtMs = Date.parse(checkedAt);
+    return Number.isFinite(checkedAtMs) && Date.now() - checkedAtMs < viewerMetricsIntervalMs;
+  }
+
   async showMessage(messageId: string) {
     await this.init();
     const message = this.findMessage(messageId);
@@ -405,7 +423,6 @@ export class AppController {
     };
     this.markDisplayed(messageId);
     this.events.emit("overlay:show", this.overlayState);
-    this.events.emit("overlay:state", this.overlayState);
     await this.emitSync();
     return this.overlayState;
   }
@@ -417,7 +434,6 @@ export class AppController {
       currentMessage: null
     };
     this.events.emit("overlay:hide", this.overlayState);
-    this.events.emit("overlay:state", this.overlayState);
     await this.emitSync();
     return this.overlayState;
   }
@@ -448,7 +464,6 @@ export class AppController {
       currentMessage: { ...message, displayedAt: new Date().toISOString() }
     };
     this.events.emit("overlay:test", this.overlayState);
-    this.events.emit("overlay:state", this.overlayState);
     await this.emitSync();
     return { message, overlay: this.overlayState };
   }
@@ -464,7 +479,6 @@ export class AppController {
       theme: this.settings.theme
     };
     this.events.emit("overlay:theme:update", this.settings);
-    this.events.emit("overlay:state", this.overlayState);
     await this.emitSync();
     return this.settings;
   }
@@ -510,8 +524,6 @@ export class AppController {
     const abortController = new AbortController();
     this.streamAbortController = abortController;
     const streamStartedAt = Date.now();
-    let receivedBatch = false;
-
     try {
       for await (const batch of streamLiveChatMessages({
         liveChatId,
@@ -522,10 +534,8 @@ export class AppController {
           return;
         }
 
-        receivedBatch = true;
         this.nextPageToken = batch.nextPageToken ?? this.nextPageToken;
-        this.reconnectDelayMs = initialReconnectDelayMs;
-        this.shortStreamCloseCount = 0;
+        this.markStableStreamIfReady(streamStartedAt);
         this.ingestMessages(batch.messages);
 
         const now = new Date().toISOString();
@@ -544,7 +554,6 @@ export class AppController {
           ...clearBroadcastErrorFields()
         };
         this.events.emit("broadcast:status", this.broadcastStatus);
-        await this.emitSync();
 
         if (ended) {
           this.clearCurrentAbortController(abortController);
@@ -563,7 +572,7 @@ export class AppController {
 
       if (this.isCurrentStream(generation) && !abortController.signal.aborted) {
         this.clearCurrentAbortController(abortController);
-        if (this.registerShortStreamClose(receivedBatch, streamStartedAt)) {
+        if (this.registerShortStreamClose(streamStartedAt)) {
           await this.stopForStreamError({
             kind: "network",
             message: "YouTubeライブチャットのストリーム接続が短時間で繰り返し終了しました。",
@@ -583,6 +592,7 @@ export class AppController {
       }
 
       const classified = classifyYouTubeError(error);
+      this.markStableStreamIfReady(streamStartedAt);
       if (classified.retryable) {
         await this.scheduleStreamReconnect(generation, classified);
         return;
@@ -646,52 +656,49 @@ export class AppController {
   }
 
   private ingestMessages(messages: ChatMessage[]) {
+    const freshMessages: ChatMessage[] = [];
+
     for (const message of messages) {
-      if (this.fetchedMessageIds.has(message.platformMessageId)) {
-        continue;
+      if (this.rememberFetchedMessageId(message.platformMessageId)) {
+        freshMessages.push(message);
       }
-      this.fetchedMessageIds.add(message.platformMessageId);
-      this.messages = this.prioritizeRetainedMessages([message, ...this.messages]);
-      if (message.isSuperChat) {
-        this.superChats = [message, ...this.superChats.filter((item) => item.platformMessageId !== message.platformMessageId)].slice(0, maxSuperChats);
-      }
+    }
+
+    if (!freshMessages.length) {
+      return;
+    }
+
+    const newestFirst = [...freshMessages].reverse();
+    this.messages = prioritizeRetainedMessages([...newestFirst, ...this.messages]);
+
+    const superChats = newestFirst.filter((message) => message.isSuperChat);
+    if (superChats.length) {
+      const incomingIds = new Set(superChats.map((message) => message.platformMessageId));
+      this.superChats = [
+        ...superChats,
+        ...this.superChats.filter((item) => !incomingIds.has(item.platformMessageId))
+      ].slice(0, maxRetainedSuperChats);
+    }
+
+    for (const message of freshMessages) {
       this.events.emit("comment:new", message);
     }
   }
 
-  private prioritizeRetainedMessages(messages: ChatMessage[]) {
-    if (messages.length <= maxMessages) {
-      return messages;
+  private rememberFetchedMessageId(platformMessageId: string) {
+    if (this.fetchedMessageIds.has(platformMessageId)) {
+      return false;
     }
 
-    const retainedIndexes = new Set(
-      messages
-        .map((message, index) => ({ index, priority: this.retentionPriority(message) }))
-        .sort((left, right) => left.priority - right.priority || left.index - right.index)
-        .slice(0, maxMessages)
-        .map(({ index }) => index)
-    );
-
-    return messages.filter((_, index) => retainedIndexes.has(index));
-  }
-
-  private retentionPriority(message: ChatMessage) {
-    const displayed = Boolean(message.displayedAt);
-    const important = message.isSuperChat || message.isOwner || message.isModerator || message.isMember;
-
-    if (!displayed && message.isSuperChat) {
-      return 0;
+    this.fetchedMessageIds.add(platformMessageId);
+    this.fetchedMessageIdQueue.push(platformMessageId);
+    while (this.fetchedMessageIdQueue.length > maxFetchedMessageIds) {
+      const expired = this.fetchedMessageIdQueue.shift();
+      if (expired) {
+        this.fetchedMessageIds.delete(expired);
+      }
     }
-
-    if (!displayed && (message.isOwner || message.isModerator || message.isMember)) {
-      return 1;
-    }
-
-    if (!displayed) {
-      return 2;
-    }
-
-    return important ? 3 : 4;
+    return true;
   }
 
   private findMessage(messageId: string) {
@@ -765,14 +772,23 @@ export class AppController {
     );
   }
 
-  private registerShortStreamClose(receivedBatch: boolean, streamStartedAt: number) {
-    if (receivedBatch || Date.now() - streamStartedAt >= shortStreamCloseMs) {
-      this.shortStreamCloseCount = 0;
+  private registerShortStreamClose(streamStartedAt: number) {
+    if (this.markStableStreamIfReady(streamStartedAt)) {
       return false;
     }
 
     this.shortStreamCloseCount += 1;
     return this.shortStreamCloseCount >= maxShortStreamCloses;
+  }
+
+  private markStableStreamIfReady(streamStartedAt: number) {
+    if (Date.now() - streamStartedAt < shortStreamCloseMs) {
+      return false;
+    }
+
+    this.shortStreamCloseCount = 0;
+    this.reconnectDelayMs = initialReconnectDelayMs;
+    return true;
   }
 
   private async stopForStreamError(error: ClassifiedYouTubeError) {

@@ -50,7 +50,7 @@ export function OverlayPanel({
           >
             <div className="flex items-start gap-3">
               {active.authorImageUrl && overlay.theme.showAvatar ? (
-                <img src={active.authorImageUrl} alt="" className="h-10 w-10 rounded-full object-cover" />
+                <img src={active.authorImageUrl} alt="" width={40} height={40} className="h-10 w-10 rounded-full object-cover" />
               ) : null}
               <div className="min-w-0 flex-1">
                 {overlay.theme.showAuthorName ? <div className="truncate text-sm font-semibold">{active.authorName}</div> : null}

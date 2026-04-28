@@ -64,9 +64,13 @@ export function BroadcastPanel({
       <div className="grid gap-3">
         <Field label="配信URL" hint="YouTube Studioまたは配信ページのライブ動画URLを入力します。">
           <input
+            type="url"
+            name="broadcastUrl"
+            inputMode="url"
+            autoComplete="off"
             value={broadcastUrl}
             onChange={(event) => setBroadcastUrl(event.target.value)}
-            className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+            className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
             placeholder="https://www.youtube.com/watch?v=..."
           />
         </Field>

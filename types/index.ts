@@ -179,7 +179,6 @@ export const socketEvents = {
   youtubeStatus: "youtube:status",
   broadcastStatus: "broadcast:status",
   overlayConnected: "overlay:connected",
-  overlayState: "overlay:state",
   overlayShow: "overlay:show",
   overlayHide: "overlay:hide",
   overlayThemeUpdate: "overlay:theme:update",

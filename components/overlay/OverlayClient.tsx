@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Crown, Sparkles } from "lucide-react";
 import { io, type Socket } from "socket.io-client";
 import { getSuperChatTier } from "@/lib/superChat";
@@ -22,7 +22,6 @@ type OverlayEventName =
 type ServerToClientEvents = {
   [socketEvents.stateSync]: (state: unknown) => void;
   [socketEvents.overlaySync]: (state: OverlayState) => void;
-  [socketEvents.overlayState]: (state: OverlayState) => void;
   [socketEvents.overlayShow]: (state: OverlayState) => void;
   [socketEvents.overlayHide]: (state: OverlayState) => void;
   [socketEvents.overlayTest]: (state: OverlayState) => void;
@@ -201,11 +200,13 @@ function OverlayCard({
   theme,
   isCompact,
   eventName,
+  reducedMotion,
 }: {
   message: ChatMessage;
   theme: Theme;
   isCompact: boolean;
   eventName: OverlayEventName;
+  reducedMotion: boolean;
 }) {
   const cardKey = messageKey(message);
   const maxCardWidth = Math.min(theme.cardWidth, isCompact ? 760 : theme.stylePreset === "minimal-broadcast" ? 1180 : 920);
@@ -233,23 +234,29 @@ function OverlayCard({
     : undefined;
   const initials = authorInitials(message.authorName);
 
-  const variants = {
-    hidden: {
-      opacity: 0,
-      y: animationType === "fade" ? 0 : animationType === "scale" ? 10 : 26,
-      scale: animationType === "scale" ? 0.96 : 1
-    },
-    visible: {
-      opacity: 1,
-      y: 0,
-      scale: 1
-    },
-    exit: {
-      opacity: 0,
-      y: animationType === "fade" ? 0 : animationType === "scale" ? 8 : 18,
-      scale: animationType === "scale" ? 0.98 : 1
-    }
-  };
+  const variants = reducedMotion
+    ? {
+        hidden: { opacity: 0 },
+        visible: { opacity: 1 },
+        exit: { opacity: 0 }
+      }
+    : {
+        hidden: {
+          opacity: 0,
+          y: animationType === "fade" ? 0 : animationType === "scale" ? 10 : 26,
+          scale: animationType === "scale" ? 0.96 : 1
+        },
+        visible: {
+          opacity: 1,
+          y: 0,
+          scale: 1
+        },
+        exit: {
+          opacity: 0,
+          y: animationType === "fade" ? 0 : animationType === "scale" ? 8 : 18,
+          scale: animationType === "scale" ? 0.98 : 1
+        }
+      };
 
   return (
     <motion.section
@@ -260,13 +267,17 @@ function OverlayCard({
       animate="visible"
       exit="exit"
       variants={variants}
-      transition={{
-        type: animationType === "fade" ? "tween" : "spring",
-        duration: animationType === "fade" ? 0.22 : 0.42,
-        bounce: 0.16,
-        damping: 24,
-        stiffness: 180
-      }}
+      transition={
+        reducedMotion
+          ? { type: "tween", duration: 0.01 }
+          : {
+              type: animationType === "fade" ? "tween" : "spring",
+              duration: animationType === "fade" ? 0.22 : 0.42,
+              bounce: 0.16,
+              damping: 24,
+              stiffness: 180
+            }
+      }
       className="pointer-events-none relative overflow-visible"
       style={{
         width: isMinimal ? "min(100vw - 80px, 1180px)" : "min(100vw - 48px, 920px)",
@@ -354,6 +365,8 @@ function OverlayCard({
               <img
                 src={message.authorImageUrl}
                 alt=""
+                width={64}
+                height={64}
                 className="h-full w-full object-cover"
                 referrerPolicy="no-referrer"
               />
@@ -425,10 +438,12 @@ function SuperChatCard({
   message,
   theme,
   isCompact,
+  reducedMotion,
 }: {
   message: ChatMessage;
   theme: Theme;
   isCompact: boolean;
+  reducedMotion: boolean;
 }) {
   const cardKey = messageKey(message);
   const tier = getSuperChatTier(message.amountText);
@@ -449,23 +464,29 @@ function SuperChatCard({
       })
     : undefined;
 
-  const variants = {
-    hidden: {
-      opacity: 0,
-      y: animationType === "fade" ? 0 : animationType === "scale" ? 12 : 30,
-      scale: animationType === "scale" ? 0.94 : 1
-    },
-    visible: {
-      opacity: 1,
-      y: 0,
-      scale: 1
-    },
-    exit: {
-      opacity: 0,
-      y: animationType === "fade" ? 0 : animationType === "scale" ? 10 : 18,
-      scale: animationType === "scale" ? 0.98 : 1
-    }
-  };
+  const variants = reducedMotion
+    ? {
+        hidden: { opacity: 0 },
+        visible: { opacity: 1 },
+        exit: { opacity: 0 }
+      }
+    : {
+        hidden: {
+          opacity: 0,
+          y: animationType === "fade" ? 0 : animationType === "scale" ? 12 : 30,
+          scale: animationType === "scale" ? 0.94 : 1
+        },
+        visible: {
+          opacity: 1,
+          y: 0,
+          scale: 1
+        },
+        exit: {
+          opacity: 0,
+          y: animationType === "fade" ? 0 : animationType === "scale" ? 10 : 18,
+          scale: animationType === "scale" ? 0.98 : 1
+        }
+      };
 
   return (
     <motion.section
@@ -478,13 +499,17 @@ function SuperChatCard({
       animate="visible"
       exit="exit"
       variants={variants}
-      transition={{
-        type: animationType === "fade" ? "tween" : "spring",
-        duration: animationType === "fade" ? 0.22 : 0.44,
-        bounce: 0.2,
-        damping: 22,
-        stiffness: 190
-      }}
+      transition={
+        reducedMotion
+          ? { type: "tween", duration: 0.01 }
+          : {
+              type: animationType === "fade" ? "tween" : "spring",
+              duration: animationType === "fade" ? 0.22 : 0.44,
+              bounce: 0.2,
+              damping: 22,
+              stiffness: 190
+            }
+      }
       className="pointer-events-none relative overflow-visible"
       style={{
         width: "min(calc(100vw - 48px), 760px)",
@@ -528,6 +553,8 @@ function SuperChatCard({
             <img
               src={message.authorImageUrl}
               alt=""
+              width={48}
+              height={48}
               className="h-full w-full object-cover"
               referrerPolicy="no-referrer"
             />
@@ -595,6 +622,7 @@ function SuperChatCard({
 
 export function OverlayClient({ overlayToken }: OverlayClientProps) {
   const viewport = useViewportSize();
+  const reducedMotion = Boolean(useReducedMotion());
   const isCompact = viewport.width < compactBreakpoint.width || viewport.height < compactBreakpoint.height;
   const [overlayState, setOverlayState] = useState<OverlayState | null>(null);
   const [eventName, setEventName] = useState<OverlayEventName>("sync");
@@ -641,7 +669,6 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
         applyOverlayState(state.overlay, "sync");
       }
     });
-    socket.on(socketEvents.overlayState, (state) => applyOverlayState(state, "sync"));
     socket.on(socketEvents.overlayShow, (state) => applyOverlayState(state, "show"));
     socket.on(socketEvents.overlayHide, (state) => {
       setOverlayState(state);
@@ -674,9 +701,10 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
   const currentMessage = overlayState?.currentMessage ?? null;
   const currentKey = currentMessage ? messageKey(currentMessage) : null;
   const visibleMessage = currentMessage;
+  const placementPadding = overlayState?.theme.stylePreset === "comic-pop" && isCompact ? 44 : isCompact ? 24 : 40;
   const placement = useMemo(
-    () => cardPlacement(overlayState?.theme.cardPosition ?? "bottom-center", isCompact ? 24 : 40),
-    [isCompact, overlayState?.theme.cardPosition]
+    () => cardPlacement(overlayState?.theme.cardPosition ?? "bottom-center", placementPadding),
+    [overlayState?.theme.cardPosition, placementPadding]
   );
 
   return (
@@ -691,6 +719,7 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
                   message={visibleMessage}
                   theme={overlayState.theme}
                   isCompact={isCompact}
+                  reducedMotion={reducedMotion}
                 />
               ) : (
                 <OverlayCard
@@ -699,6 +728,7 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
                   theme={overlayState.theme}
                   isCompact={isCompact}
                   eventName={eventName}
+                  reducedMotion={reducedMotion}
                 />
               )
             ) : null}

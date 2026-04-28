@@ -37,9 +37,15 @@ const messagePreviewStyle: CSSProperties = {
   WebkitLineClamp: 4
 };
 
+const messageRowStyle: CSSProperties = {
+  contentVisibility: "auto",
+  containIntrinsicSize: "96px"
+};
+
 export function MessagePanel({
   messages,
   activeMessageId,
+  latestMessageId,
   search,
   setSearch,
   commentView,
@@ -56,6 +62,7 @@ export function MessagePanel({
 }: {
   messages: ChatMessage[];
   activeMessageId: string | null;
+  latestMessageId: string | null;
   search: string;
   setSearch: (value: string) => void;
   commentView: CommentView;
@@ -86,7 +93,13 @@ export function MessagePanel({
         <div className="flex items-center gap-2">
           <Badge tone="slate">{`現在 ${filteredCount}件`}</Badge>
           <Badge tone={undisplayedCount > 0 ? "amber" : "slate"}>{`未表示 ${undisplayedCount}件`}</Badge>
-          <Button size="sm" variant={autoscroll ? "primary" : "ghost"} icon={<ArrowDownToLine className="h-3.5 w-3.5" />} onClick={() => setAutoscroll(!autoscroll)}>
+          <Button
+            size="sm"
+            variant={autoscroll ? "primary" : "ghost"}
+            icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
+            onClick={() => setAutoscroll(!autoscroll)}
+            aria-pressed={autoscroll}
+          >
             最新へ追従
           </Button>
         </div>
@@ -94,23 +107,26 @@ export function MessagePanel({
     >
       <div className="-m-4 grid">
         <label className="flex h-12 items-center gap-2 border-b border-slate-200 bg-white px-4">
-          <Search className="h-4 w-4 text-slate-400" />
+          <Search className="h-4 w-4 text-slate-400" aria-hidden />
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="投稿者名、本文、種別で検索"
-            className="w-full bg-transparent text-sm outline-none"
+            aria-label="コメントを検索"
+            className="w-full bg-transparent text-sm outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
           />
         </label>
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2" role="tablist" aria-label="コメント表示フィルター">
           {viewOptions.map((option) => {
             const active = commentView === option.value;
             return (
               <button
                 key={option.value}
                 type="button"
+                role="tab"
+                aria-selected={active}
                 onClick={() => setCommentView(option.value)}
-                className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition ${
+                className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2 ${
                   active
                     ? "border-slate-900 bg-slate-900 text-white"
                     : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
@@ -125,9 +141,9 @@ export function MessagePanel({
         <div ref={listRef} className="min-h-[34rem] max-h-[calc(100vh-17rem)] overflow-auto bg-white">
           <div className="px-2 py-3">
             {orderedMessages.length ? (
-              orderedMessages.map((message, index) => {
+              orderedMessages.map((message) => {
                 const active = message.id === activeMessageId;
-                const isLatest = index === orderedMessages.length - 1;
+                const isLatest = message.id === latestMessageId;
                 const rowClassName = message.isSuperChat
                   ? active
                     ? "border-red-600 bg-red-50/80 ring-1 ring-amber-300"
@@ -138,20 +154,11 @@ export function MessagePanel({
                 return (
                   <article
                     key={message.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onShowMessage(message)}
-                    onKeyDown={(event) => {
-                      if (event.target !== event.currentTarget) return;
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        onShowMessage(message);
-                      }
-                    }}
-                    className={`group grid cursor-pointer grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-xl border-l-4 px-3 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 ${rowClassName}`}
+                    className={`group grid grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-xl border-l-4 px-3 py-3 text-left transition ${rowClassName}`}
+                    style={messageRowStyle}
                   >
                     {message.authorImageUrl ? (
-                      <img src={message.authorImageUrl} alt="" className="mt-0.5 h-9 w-9 rounded-full object-cover" />
+                      <img src={message.authorImageUrl} alt="" width={36} height={36} className="mt-0.5 h-9 w-9 rounded-full object-cover" />
                     ) : (
                       <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white">
                         {message.messageType === "textMessageEvent" || message.messageType === "testMessage" ? (
@@ -162,36 +169,39 @@ export function MessagePanel({
                       </div>
                     )}
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                        <span className="max-w-[16rem] truncate text-sm font-semibold text-slate-900">{message.authorName}</span>
-                        <span className="text-[11px] text-slate-500">{formatChatTime(message.publishedAt)}</span>
-                        <span className="text-[11px] text-slate-500">{formatMessageMeta(message)}</span>
-                        {active ? <Badge tone="amber" className="border-0 bg-amber-100">表示中</Badge> : null}
-                        {message.displayedAt ? <Badge tone="blue" className="border-0 bg-sky-100">表示済み</Badge> : null}
-                        {isLatest ? <Badge tone="slate" className="border-0 bg-slate-950 text-white">最新</Badge> : null}
-                      </div>
-                      {message.isSuperChat ? (
-                        <div className="mt-2 inline-flex rounded-full bg-amber-500 px-3 py-1 text-sm font-bold text-white shadow-sm shadow-amber-200">
-                          {message.amountText ?? "Super Chat"}
+                      <button
+                        type="button"
+                        onClick={() => onShowMessage(message)}
+                        className="block w-full cursor-pointer rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
+                      >
+                        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                          <span className="max-w-[16rem] truncate text-sm font-semibold text-slate-900">{message.authorName}</span>
+                          <span className="text-[11px] text-slate-500">{formatChatTime(message.publishedAt)}</span>
+                          <span className="text-[11px] text-slate-500">{formatMessageMeta(message)}</span>
+                          {active ? <Badge tone="amber" className="border-0 bg-amber-100">表示中</Badge> : null}
+                          {message.displayedAt ? <Badge tone="blue" className="border-0 bg-sky-100">表示済み</Badge> : null}
+                          {isLatest ? <Badge tone="slate" className="border-0 bg-slate-950 text-white">最新</Badge> : null}
                         </div>
-                      ) : null}
-                      <p className="mt-1 whitespace-pre-wrap text-[15px] leading-6 text-slate-900" style={messagePreviewStyle}>
-                        {message.messageText}
-                      </p>
-                      {!message.isSuperChat && message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
+                        {message.isSuperChat ? (
+                          <div className="mt-2 inline-flex rounded-full bg-amber-500 px-3 py-1 text-sm font-bold text-white shadow-sm shadow-amber-200">
+                            {message.amountText ?? "Super Chat"}
+                          </div>
+                        ) : null}
+                        <p className="mt-1 whitespace-pre-wrap text-[15px] leading-6 text-slate-900" style={messagePreviewStyle}>
+                          {message.messageText}
+                        </p>
+                        {!message.isSuperChat && message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
+                      </button>
                       <div className="mt-2 flex flex-wrap gap-2 opacity-100 transition lg:opacity-70 lg:group-hover:opacity-100">
                         <Button
                           size="sm"
                           icon={<Play className="h-3.5 w-3.5" />}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onShowMessage(message);
-                          }}
+                          onClick={() => onShowMessage(message)}
                           disabled={busyAction === `show-${message.id}`}
                         >
                           表示
                         </Button>
-                        <Button size="sm" variant="ghost" icon={<Copy className="h-3.5 w-3.5" />} onClick={(event) => { event.stopPropagation(); onCopyMessage(message); }}>
+                        <Button size="sm" variant="ghost" icon={<Copy className="h-3.5 w-3.5" />} onClick={() => onCopyMessage(message)}>
                           コピー
                         </Button>
                       </div>

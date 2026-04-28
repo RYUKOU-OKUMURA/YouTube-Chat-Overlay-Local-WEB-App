@@ -190,6 +190,7 @@ data/
 
 - Socket.IO 接続後に `admin:subscribe`
 - `state:sync` で full `AppState` を同期
+- 通常のコメント流入は `comment:new` と `broadcast:status` の差分イベントで更新
 - Socket sync が一定時間届かない場合だけ `/api/state` の full snapshot へ fallback
 - Socket 接続中の手動再同期は `state:request-sync` を使う
 
@@ -294,7 +295,6 @@ Socket.IO を同一 HTTP server 上の `/socket.io` で動かす。
 - `youtube:status`
 - `broadcast:status`
 - `overlay:connected`
-- `overlay:state`
 - `overlay:show`
 - `overlay:hide`
 - `overlay:theme:update`
@@ -305,7 +305,7 @@ Socket.IO を同一 HTTP server 上の `/socket.io` で動かす。
 - 管理画面は `admin` room に入る。
 - オーバーレイは `overlay:{overlayToken}` room に入る。
 
-`state:sync`、`comment:new`、`youtube:status`、`broadcast:status`、`overlay:connected` は admin room に送る。`overlay:sync`、`overlay:show`、`overlay:hide`、`overlay:state`、`overlay:test`、`overlay:theme:update` は現在の overlay token に対応する overlay room に送る。`overlay:theme:update` は `Settings` 全体ではなく `{ theme }` だけを送る。
+`state:sync`、`comment:new`、`youtube:status`、`broadcast:status`、`overlay:connected` は admin room に送る。`state:sync` は初回接続、明示同期、復旧用の full snapshot に限定し、コメント batch ごとには送らない。`overlay:sync`、`overlay:show`、`overlay:hide`、`overlay:test`、`overlay:theme:update` は現在の overlay token に対応する overlay room に送る。`overlay:theme:update` は `Settings` 全体ではなく `{ theme }` だけを送る。
 
 ## 8. YouTube API
 
@@ -411,7 +411,7 @@ DB は使用しない。
 
 - settings
 - messages
-- fetchedMessageIds
+- fetchedMessageIds / fetchedMessageIdQueue
 - nextPageToken
 - streamAbortController
 - reconnectTimer

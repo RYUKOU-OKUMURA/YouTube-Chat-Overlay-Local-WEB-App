@@ -4,6 +4,7 @@ import { appController } from "@/server/state/appController";
 import { socketEvents } from "@/types";
 
 let io: Server | null = null;
+let currentOverlayToken: string | null = null;
 
 type SocketData = {
   role?: "admin" | "overlay";
@@ -16,11 +17,21 @@ function overlayRoom(overlayToken: string) {
   return `overlay:${overlayToken}`;
 }
 
+function rememberOverlayToken(overlayToken: string) {
+  currentOverlayToken = overlayToken;
+  return overlayToken;
+}
+
 function emitToCurrentOverlayRoom(eventName: string, payload: unknown) {
+  if (currentOverlayToken) {
+    io?.to(overlayRoom(currentOverlayToken)).emit(eventName, payload);
+    return;
+  }
+
   void appController
     .getState()
     .then((state) => {
-      io?.to(overlayRoom(state.overlayToken)).emit(eventName, payload);
+      io?.to(overlayRoom(rememberOverlayToken(state.overlayToken))).emit(eventName, payload);
     })
     .catch(() => undefined);
 }
@@ -45,7 +56,9 @@ export function attachSocketServer(httpServer: HttpServer) {
       data.role = "admin";
       data.overlayToken = undefined;
       await socket.join(adminRoom);
-      socket.emit(socketEvents.stateSync, await appController.getState());
+      const state = await appController.getState();
+      rememberOverlayToken(state.overlayToken);
+      socket.emit(socketEvents.stateSync, state);
     });
 
     socket.on(socketEvents.overlaySubscribe, async (payload?: { overlayToken?: string }) => {
@@ -59,6 +72,7 @@ export function attachSocketServer(httpServer: HttpServer) {
         socket.disconnect(true);
         return;
       }
+      rememberOverlayToken(state.overlayToken);
       const data = socket.data as SocketData;
       data.role = "overlay";
       data.overlayToken = overlayToken;
@@ -69,6 +83,7 @@ export function attachSocketServer(httpServer: HttpServer) {
 
     socket.on(socketEvents.requestSync, async () => {
       const state = await appController.getState();
+      rememberOverlayToken(state.overlayToken);
       const data = socket.data as SocketData;
 
       if (data.role === "admin") {
@@ -90,8 +105,10 @@ export function attachSocketServer(httpServer: HttpServer) {
       if (data.role !== "overlay") {
         return;
       }
-      const state = await appController.getState();
-      const sockets = await io?.in(overlayRoom(state.overlayToken)).fetchSockets();
+      if (!data.overlayToken) {
+        return;
+      }
+      const sockets = await io?.in(overlayRoom(data.overlayToken)).fetchSockets();
       if (!sockets || sockets.length === 0) {
         await appController.setOverlayConnected(false);
       }
@@ -99,16 +116,13 @@ export function attachSocketServer(httpServer: HttpServer) {
   });
 
   appController.events.on("state:sync", (state) => {
+    rememberOverlayToken(state.overlayToken);
     io?.to(adminRoom).emit(socketEvents.stateSync, state);
-    io?.to(overlayRoom(state.overlayToken)).emit(socketEvents.overlaySync, state.overlay);
   });
   appController.events.on("comment:new", (message) => io?.to(adminRoom).emit(socketEvents.commentNew, message));
   appController.events.on("youtube:status", (status) => io?.to(adminRoom).emit(socketEvents.youtubeStatus, status));
   appController.events.on("broadcast:status", (status) => io?.to(adminRoom).emit(socketEvents.broadcastStatus, status));
   appController.events.on("overlay:connected", (payload) => io?.to(adminRoom).emit(socketEvents.overlayConnected, payload));
-  appController.events.on("overlay:state", (state) => {
-    emitToCurrentOverlayRoom(socketEvents.overlayState, state);
-  });
   appController.events.on("overlay:show", (state) => {
     emitToCurrentOverlayRoom(socketEvents.overlayShow, state);
   });

@@ -1,4 +1,5 @@
 import { mkdir, readFile, rm, rename, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import type { YouTubeToken } from "@/types";
 
@@ -6,7 +7,7 @@ const tokenPath = path.join(process.cwd(), "data", "youtube-token.json");
 
 async function writeJsonAtomic(filePath: string, value: unknown) {
   await mkdir(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.tmp`;
+  const tmpPath = `${filePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   await rename(tmpPath, filePath);
 }

@@ -38,6 +38,9 @@ const animationLabels: Record<Theme["animationType"], string> = {
   scale: "拡大"
 };
 
+const controlClassName =
+  "h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2";
+
 function presetCardStyle(preset: (typeof overlayStylePresets)[number], active: boolean): CSSProperties {
   const accent = preset.theme.accentColor ?? "#38bdf8";
   const ink = preset.theme.textColor ?? "#0f172a";
@@ -107,7 +110,7 @@ export function SettingsPanel({
                   key={preset.id}
                   type="button"
                   onClick={() => onPatchSettings({ theme: preset.theme })}
-                  className="relative grid min-h-[128px] content-between overflow-hidden rounded-xl border p-3 text-left transition hover:-translate-y-0.5"
+                  className="relative grid min-h-[128px] content-between overflow-hidden rounded-xl border p-3 text-left transition hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
                   style={presetCardStyle(preset, active)}
                 >
                   {preset.id === "clinic-calm" ? (
@@ -146,7 +149,7 @@ export function SettingsPanel({
             <select
               value={theme.fontFamily}
               onChange={(event) => onPatchSettings({ theme: { fontFamily: event.target.value } })}
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
+              className={controlClassName}
             >
               {fontFamilies.map((family) => (
                 <option key={family} value={family}>
@@ -162,7 +165,7 @@ export function SettingsPanel({
               max={64}
               value={theme.fontSize}
               onChange={(event) => onPatchSettings({ theme: { fontSize: Number(event.target.value) } })}
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
+              className={controlClassName}
             />
           </Field>
           <Field label="文字サイズの自動調整">
@@ -182,7 +185,7 @@ export function SettingsPanel({
               max={1200}
               value={theme.cardWidth}
               onChange={(event) => onPatchSettings({ theme: { cardWidth: Number(event.target.value) } })}
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
+              className={controlClassName}
             />
           </Field>
           <Field label="角丸">
@@ -192,14 +195,14 @@ export function SettingsPanel({
               max={48}
               value={theme.borderRadius}
               onChange={(event) => onPatchSettings({ theme: { borderRadius: Number(event.target.value) } })}
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
+              className={controlClassName}
             />
           </Field>
           <Field label="表示位置">
             <select
               value={theme.cardPosition}
               onChange={(event) => onPatchSettings({ theme: { cardPosition: event.target.value as Theme["cardPosition"] } })}
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
+              className={controlClassName}
             >
               {positions.map((position) => (
                 <option key={position} value={position}>
@@ -214,21 +217,21 @@ export function SettingsPanel({
             <input
               value={theme.backgroundColor}
               onChange={(event) => onPatchSettings({ theme: { backgroundColor: event.target.value } })}
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
+              className={controlClassName}
             />
           </Field>
           <Field label="文字色">
             <input
               value={theme.textColor}
               onChange={(event) => onPatchSettings({ theme: { textColor: event.target.value } })}
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
+              className={controlClassName}
             />
           </Field>
           <Field label="アクセント色">
             <input
               value={theme.accentColor}
               onChange={(event) => onPatchSettings({ theme: { accentColor: event.target.value } })}
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
+              className={controlClassName}
             />
           </Field>
         </div>
@@ -237,7 +240,7 @@ export function SettingsPanel({
             <select
               value={theme.animationType}
               onChange={(event) => onPatchSettings({ theme: { animationType: event.target.value as Theme["animationType"] } })}
-              className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none"
+              className={controlClassName}
             >
               <option value="fade">フェード</option>
               <option value="slide-up">下からスライド</option>

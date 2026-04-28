@@ -13,7 +13,7 @@ export function createOverlayToken() {
 
 async function writeJsonAtomic(filePath: string, value: unknown) {
   await mkdir(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.tmp`;
+  const tmpPath = `${filePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   await rename(tmpPath, filePath);
 }

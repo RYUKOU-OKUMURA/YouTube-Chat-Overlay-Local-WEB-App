@@ -5,6 +5,7 @@ import { io, type Socket } from "socket.io-client";
 import { Copy, MonitorCog, RefreshCcw, SlidersHorizontal, TestTube2, BadgeJapaneseYen } from "lucide-react";
 import type { AppState, BroadcastStatus, ChatMessage, Settings, Theme, YouTubeStatus } from "@/types";
 import { socketEvents } from "@/types";
+import { isImportantMessage, maxRetainedSuperChats, prioritizeRetainedMessages } from "@/lib/messageRetention";
 import { Button } from "@/components/common/Button";
 import { Panel } from "@/components/common/Panel";
 import { fetchJson } from "./api";
@@ -33,10 +34,6 @@ type SettingsPatch = {
 };
 
 const socketSyncFallbackDelayMs = 1200;
-
-function isImportantMessage(message: ChatMessage) {
-  return message.isSuperChat || message.isMember || message.isModerator || message.isOwner;
-}
 
 export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   const [state, setState] = useState<DashboardState | null>(null);
@@ -109,6 +106,39 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
       socketSyncVersionRef.current += 1;
       fallbackController.abort();
       applyAppState(nextState);
+    });
+    socket.on(socketEvents.commentNew, (message: ChatMessage) => {
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              messages: prioritizeRetainedMessages([
+                message,
+                ...prev.messages.filter((item) => item.platformMessageId !== message.platformMessageId)
+              ]),
+              superChats: message.isSuperChat
+                ? [message, ...prev.superChats.filter((item) => item.platformMessageId !== message.platformMessageId)].slice(0, maxRetainedSuperChats)
+                : prev.superChats
+            }
+          : prev
+      );
+    });
+    socket.on(socketEvents.broadcastStatus, (broadcastStatus: BroadcastStatus) => {
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              broadcastStatus,
+              lastBroadcastUrl: broadcastStatus.currentBroadcastUrl ?? prev.lastBroadcastUrl
+            }
+          : prev
+      );
+    });
+    socket.on(socketEvents.youtubeStatus, (youtubeStatus: YouTubeStatus) => {
+      setState((prev) => (prev ? { ...prev, youtubeStatus } : prev));
+    });
+    socket.on(socketEvents.overlayConnected, ({ connected }: { connected: boolean }) => {
+      setState((prev) => (prev ? { ...prev, overlayConnected: connected } : prev));
     });
 
     const fallbackTimer = window.setTimeout(() => {
@@ -369,6 +399,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   }
 
   const lastSyncLabel = lastSyncedAt ? `同期 ${new Date(lastSyncedAt).toLocaleTimeString()}` : undefined;
+  const latestMessageId = state?.messages[0]?.id ?? null;
 
   if (!state) {
     return (
@@ -424,13 +455,19 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
                 onRefresh={syncStatus}
               />
             </div>
-            {notice ? <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">{notice}</div> : null}
+            {notice ? (
+              <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800" role="status" aria-live="polite">
+                {notice}
+              </div>
+            ) : null}
           </div>
-          <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-3">
+          <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-3" role="tablist" aria-label="管理画面表示切り替え">
             <button
               type="button"
+              role="tab"
+              aria-selected={activeView === "control"}
               onClick={() => setActiveView("control")}
-              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition ${
+              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2 ${
                 activeView === "control"
                   ? "border-slate-900 bg-slate-900 text-white"
                   : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
@@ -441,8 +478,10 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={activeView === "admin"}
               onClick={() => setActiveView("admin")}
-              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition ${
+              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2 ${
                 activeView === "admin"
                   ? "border-slate-900 bg-slate-900 text-white"
                   : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
@@ -455,10 +494,11 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
         </div>
 
         {activeView === "control" ? (
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
             <MessagePanel
               messages={filteredMessages}
               activeMessageId={state.overlay.currentMessage?.id ?? null}
+              latestMessageId={latestMessageId}
               search={search}
               setSearch={setSearch}
               commentView={commentView}
