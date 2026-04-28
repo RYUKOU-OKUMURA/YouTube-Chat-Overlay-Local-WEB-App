@@ -3,7 +3,8 @@ import {
   YouTubeStreamParserError,
   YouTubeStreamResponseShapeError,
   classifyYouTubeError,
-  getLiveChatInfo
+  getLiveChatInfo,
+  getViewerMetrics
 } from "@/server/youtube/api";
 
 const mocks = vi.hoisted(() => ({
@@ -268,6 +269,42 @@ describe("getLiveChatInfo diagnosis", () => {
       channelName: "Test channel",
       scheduledStartTime: "2026-04-28T10:30:00.000Z",
       actualStartTime: "2026-04-28T11:00:00.000Z"
+    });
+  });
+
+  test("returns viewer metrics when concurrent viewers are available", async () => {
+    mocks.videosList.mockResolvedValue({
+      data: {
+        items: [
+          {
+            liveStreamingDetails: {
+              concurrentViewers: "123"
+            }
+          }
+        ]
+      }
+    });
+
+    await expect(getViewerMetrics("live-video")).resolves.toMatchObject({
+      concurrentViewers: 123,
+      status: "available"
+    });
+  });
+
+  test("marks viewer metrics unavailable when concurrent viewers are hidden", async () => {
+    mocks.videosList.mockResolvedValue({
+      data: {
+        items: [
+          {
+            liveStreamingDetails: {}
+          }
+        ]
+      }
+    });
+
+    await expect(getViewerMetrics("live-video")).resolves.toMatchObject({
+      status: "unavailable",
+      message: "視聴者数非表示または取得不可"
     });
   });
 });

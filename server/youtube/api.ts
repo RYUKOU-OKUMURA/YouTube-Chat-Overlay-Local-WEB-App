@@ -9,9 +9,17 @@ export type LiveChatInfo = {
   liveChatId: string;
   streamTitle?: string;
   channelName?: string;
+  concurrentViewers?: number;
   scheduledStartTime?: string;
   actualStartTime?: string;
   actualEndTime?: string;
+};
+
+export type ViewerMetricsResult = {
+  concurrentViewers?: number;
+  checkedAt: string;
+  status: "available" | "unavailable";
+  message?: string;
 };
 
 export type LiveChatStreamBatch = {
@@ -128,6 +136,14 @@ export class YouTubeStreamResponseShapeError extends YouTubeDiagnosticError {
   }
 }
 
+function parseConcurrentViewers(value: youtube_v3.Schema$VideoLiveStreamingDetails["concurrentViewers"]) {
+  if (value === null || value === undefined || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export async function getLiveChatInfo(videoId: string): Promise<LiveChatInfo> {
   const auth = await getAuthorizedClient();
   const youtube = google.youtube({ version: "v3", auth });
@@ -213,9 +229,42 @@ export async function getLiveChatInfo(videoId: string): Promise<LiveChatInfo> {
     liveChatId,
     streamTitle: item.snippet?.title ?? undefined,
     channelName: item.snippet?.channelTitle ?? undefined,
+    concurrentViewers: parseConcurrentViewers(item.liveStreamingDetails?.concurrentViewers),
     scheduledStartTime,
     actualStartTime,
     actualEndTime
+  };
+}
+
+export async function getViewerMetrics(videoId: string): Promise<ViewerMetricsResult> {
+  const auth = await getAuthorizedClient();
+  const youtube = google.youtube({ version: "v3", auth });
+  const response = await youtube.videos.list({
+    part: ["liveStreamingDetails"],
+    id: [videoId]
+  });
+  const item = response.data.items?.[0];
+  if (!item) {
+    throw new YouTubeDiagnosticError({
+      kind: "videoNotFound",
+      message: "YouTube動画が見つからないか、このアカウントからアクセスできません。",
+      reason: "video_not_found_or_inaccessible",
+      phase: "request",
+      action: "同時視聴者数を更新できませんでした。URLやアクセス権を確認してください。",
+      status: 404
+    });
+  }
+
+  const concurrentViewers = parseConcurrentViewers(item.liveStreamingDetails?.concurrentViewers);
+  const checkedAt = new Date().toISOString();
+  if (typeof concurrentViewers === "number") {
+    return { concurrentViewers, checkedAt, status: "available" };
+  }
+
+  return {
+    checkedAt,
+    status: "unavailable",
+    message: "視聴者数非表示または取得不可"
   };
 }
 

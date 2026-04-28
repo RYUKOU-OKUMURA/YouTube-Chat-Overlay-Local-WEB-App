@@ -47,6 +47,15 @@ export type YouTubeStatus = {
   reason?: string;
 };
 
+export type ViewerMetrics = {
+  concurrentViewers?: number;
+  checkedAt?: string;
+  nextRefreshAt?: string;
+  intervalSeconds: number;
+  status: "idle" | "available" | "unavailable" | "error";
+  message?: string;
+};
+
 export type BroadcastStatus = {
   isFetchingComments: boolean;
   currentBroadcastUrl?: string;
@@ -84,11 +93,13 @@ export type BroadcastStatus = {
   scheduledStartTime?: string;
   actualStartTime?: string;
   actualEndTime?: string;
+  viewerMetrics?: ViewerMetrics;
 };
 
 export type AppState = {
   overlayToken: string;
   messages: ChatMessage[];
+  superChats: ChatMessage[];
   overlay: OverlayState;
   youtubeStatus: YouTubeStatus;
   broadcastStatus: BroadcastStatus;

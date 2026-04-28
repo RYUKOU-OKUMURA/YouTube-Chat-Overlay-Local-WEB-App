@@ -3,6 +3,7 @@ import type { ChatMessage } from "@/types";
 
 const mocks = vi.hoisted(() => ({
   getLiveChatInfo: vi.fn(),
+  getViewerMetrics: vi.fn(),
   streamLiveChatMessages: vi.fn(),
   classifyYouTubeError: vi.fn(),
   readSettings: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/server/youtube/api", () => ({
   getLiveChatInfo: mocks.getLiveChatInfo,
+  getViewerMetrics: mocks.getViewerMetrics,
   streamLiveChatMessages: mocks.streamLiveChatMessages,
   classifyYouTubeError: mocks.classifyYouTubeError
 }));
@@ -63,7 +65,13 @@ describe("AppController stream lifecycle", () => {
       videoId: "dQw4w9WgXcQ",
       liveChatId: "live-chat-1",
       streamTitle: "Test stream",
-      channelName: "Test channel"
+      channelName: "Test channel",
+      concurrentViewers: 12
+    });
+    mocks.getViewerMetrics.mockResolvedValue({
+      concurrentViewers: 34,
+      checkedAt: "2026-04-27T12:03:00.000Z",
+      status: "available"
     });
     mocks.classifyYouTubeError.mockImplementation((error: unknown) => {
       const classified = (error as { classified?: unknown }).classified;
@@ -439,6 +447,132 @@ describe("AppController stream lifecycle", () => {
     expect(retainedIds).not.toContain("displayed-normal-1");
     expect(retainedIds.indexOf("displayed-normal-300")).toBeLessThan(retainedIds.indexOf("displayed-normal-299"));
     expect(retainedIds.indexOf("displayed-normal-299")).toBeLessThan(retainedIds.indexOf("displayed-normal-298"));
+    await controller.stopBroadcast();
+  });
+
+  test("refreshes viewer metrics every three minutes and stops after stop", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-27T12:00:00.000Z"));
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    const startStatus = await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    expect(startStatus.viewerMetrics).toMatchObject({
+      concurrentViewers: 12,
+      status: "available",
+      intervalSeconds: 180
+    });
+    expect(mocks.getViewerMetrics).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(180000);
+    await vi.waitFor(() => expect(mocks.getViewerMetrics).toHaveBeenCalledTimes(1));
+    expect((await controller.getState()).broadcastStatus.viewerMetrics).toMatchObject({
+      concurrentViewers: 34,
+      checkedAt: "2026-04-27T12:03:00.000Z",
+      status: "available"
+    });
+
+    await controller.stopBroadcast();
+    await vi.advanceTimersByTimeAsync(180000);
+    expect(mocks.getViewerMetrics).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps viewer metrics errors out of the comment stream lifecycle", async () => {
+    vi.useFakeTimers();
+    mocks.getViewerMetrics.mockRejectedValue(new Error("viewer metrics failed"));
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      yield { messages: [message("still-live")], nextPageToken: "token-1" };
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => expect(await controller.getMessages()).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(180000);
+    await vi.waitFor(async () => {
+      expect((await controller.getState()).broadcastStatus.viewerMetrics).toMatchObject({
+        status: "error",
+        message: "viewer metrics failed"
+      });
+    });
+    expect((await controller.getState()).broadcastStatus).toMatchObject({
+      isFetchingComments: true,
+      connectionState: "connected"
+    });
+    await controller.stopBroadcast();
+  });
+
+  test("deduplicates manual viewer metric refreshes", async () => {
+    const metrics = deferred<{
+      concurrentViewers: number;
+      checkedAt: string;
+      status: "available";
+    }>();
+    mocks.getViewerMetrics.mockReturnValue(metrics.promise);
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    const firstRefresh = controller.refreshViewerMetrics();
+    const secondRefresh = controller.refreshViewerMetrics();
+    await vi.waitFor(() => expect(mocks.getViewerMetrics).toHaveBeenCalledTimes(1));
+    metrics.resolve({
+      concurrentViewers: 56,
+      checkedAt: "2026-04-27T12:01:00.000Z",
+      status: "available"
+    });
+
+    const [firstStatus, secondStatus] = await Promise.all([firstRefresh, secondRefresh]);
+    expect(firstStatus).toBe(secondStatus);
+    expect(firstStatus.viewerMetrics).toMatchObject({ concurrentViewers: 56 });
+    await controller.stopBroadcast();
+  });
+
+  test("retains up to one hundred super chats and clears them on new broadcast start", async () => {
+    const superChatBatch = Array.from({ length: 101 }, (_, index) =>
+      message(`super-chat-${index}`, {
+        isSuperChat: true,
+        amountText: `¥${index + 1}`
+      })
+    );
+    const normal = message("normal-message");
+    let streamIndex = 0;
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      streamIndex += 1;
+      if (streamIndex === 1) {
+        yield { messages: [normal, ...superChatBatch], nextPageToken: "token-1" };
+      }
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => expect((await controller.getState()).superChats).toHaveLength(100));
+    const retainedIds = (await controller.getState()).superChats.map((item) => item.id);
+    expect(retainedIds).toContain("super-chat-100");
+    expect(retainedIds).not.toContain("super-chat-0");
+    expect(retainedIds).not.toContain("normal-message");
+
+    mocks.getLiveChatInfo.mockResolvedValueOnce({
+      videoId: "aaaaaaaaaaa",
+      liveChatId: "live-chat-2",
+      streamTitle: "Second stream",
+      channelName: "Test channel"
+    });
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=aaaaaaaaaaa" });
+    expect((await controller.getState()).superChats).toEqual([]);
     await controller.stopBroadcast();
   });
 });

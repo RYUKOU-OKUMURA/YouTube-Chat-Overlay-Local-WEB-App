@@ -10,6 +10,10 @@ test.describe("admin/overlay smoke", () => {
   test("opens admin and overlay and exercises the test-comment flow", async ({ context, page }) => {
     await page.goto("/admin");
     await expect(page.getByRole("heading", { name: /YouTubeコメントオーバーレイ管理/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "YouTube映像プレビュー" })).toBeVisible();
+    await expect(page.getByText("管理・設定で配信URLを開始するとここにプレビュー表示")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "配信メトリクス" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Super Chat履歴" })).toBeVisible();
 
     const settingsResponse = await page.request.get("/api/settings");
     const settings = (await settingsResponse.json()) as ApiResponse<Settings>;
@@ -81,6 +85,10 @@ test.describe("admin/overlay smoke", () => {
     await expect(superChatAdminRow).toContainText("Super Chat");
     await expect(superChatAdminRow).toContainText("¥1,000");
 
+    const superChatHistoryPanel = page.locator("section").filter({ has: page.getByRole("heading", { name: "Super Chat履歴" }) });
+    await expect(superChatHistoryPanel).toContainText(superChatMessage.messageText);
+    await expect(superChatHistoryPanel).toContainText("¥1,000");
+
     const superChatOverlayCard = overlayPage
       .getByTestId("super-chat-card")
       .filter({ hasText: superChatMessage.messageText })
@@ -94,6 +102,10 @@ test.describe("admin/overlay smoke", () => {
 
     await page.getByRole("button", { name: "非表示" }).first().click();
     await expect(superChatOverlayCard).toBeHidden();
+
+    await superChatHistoryPanel.getByRole("button", { name: "表示" }).first().click();
+    await expect(page.getByText("コメントを表示しました。")).toBeVisible();
+    await expect(superChatOverlayCard).toBeVisible();
 
     await page.request.patch("/api/settings", {
       data: {

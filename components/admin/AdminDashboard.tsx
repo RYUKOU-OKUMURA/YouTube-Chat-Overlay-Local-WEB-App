@@ -12,12 +12,14 @@ import { ConnectionStrip } from "./ConnectionStrip";
 import { OAuthPanel } from "./OAuthPanel";
 import { BroadcastPanel } from "./BroadcastPanel";
 import { OverlayPanel } from "./OverlayPanel";
+import { BroadcasterCockpit } from "./BroadcasterCockpit";
 import { MessagePanel, type CommentView } from "./MessagePanel";
 import { SettingsPanel } from "./SettingsPanel";
 
 type DashboardState = {
   overlayToken: string;
   messages: ChatMessage[];
+  superChats: ChatMessage[];
   overlay: AppState["overlay"];
   youtubeStatus: YouTubeStatus;
   broadcastStatus: BroadcastStatus;
@@ -58,6 +60,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
       ...(prev ?? {}),
       overlayToken: nextState.overlayToken,
       messages: nextState.messages,
+      superChats: nextState.superChats,
       overlay: nextState.overlay,
       youtubeStatus: nextState.youtubeStatus,
       broadcastStatus: nextState.broadcastStatus,
@@ -271,6 +274,19 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
     }
   }
 
+  async function refreshViewerMetrics() {
+    setBusyAction("viewer-metrics");
+    try {
+      const result = await fetchJson<BroadcastStatus>("/api/broadcast/viewers/refresh", { method: "POST" });
+      setState((prev) => (prev ? { ...prev, broadcastStatus: result } : prev));
+      setNotice("同時視聴者数を更新しました。");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "同時視聴者数を更新できませんでした。");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function testMessage(kind: "normal" | "superChat" = "normal") {
     const isSuperChat = kind === "superChat";
     setBusyAction(isSuperChat ? "test-super-chat" : "test");
@@ -289,6 +305,9 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
           ? {
               ...prev,
               messages: [result.message, ...prev.messages.filter((message) => message.id !== result.message.id)].slice(0, 300),
+              superChats: result.message.isSuperChat
+                ? [result.message, ...prev.superChats.filter((message) => message.id !== result.message.id)].slice(0, 100)
+                : prev.superChats,
               overlay: result.overlay
             }
           : prev
@@ -310,6 +329,9 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
           ? {
               ...prev,
               messages: prev.messages.map((item) =>
+                item.id === message.id ? { ...item, displayedAt: next.currentMessage?.displayedAt ?? new Date().toISOString() } : item
+              ),
+              superChats: prev.superChats.map((item) =>
                 item.id === message.id ? { ...item, displayedAt: next.currentMessage?.displayedAt ?? new Date().toISOString() } : item
               ),
               overlay: next
@@ -433,7 +455,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
         </div>
 
         {activeView === "control" ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
             <MessagePanel
               messages={filteredMessages}
               activeMessageId={state.overlay.currentMessage?.id ?? null}
@@ -451,13 +473,19 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               undisplayedCount={viewCounts.undisplayed}
               viewCounts={viewCounts}
             />
-            <OverlayPanel
+            <BroadcasterCockpit
+              broadcastStatus={state.broadcastStatus}
+              superChats={state.superChats}
               overlay={state.overlay}
               onHide={hideOverlay}
-              onCopyMessage={() => {
-                if (state.overlay.currentMessage) void copyMessage(state.overlay.currentMessage);
+              onRefreshViewerMetrics={refreshViewerMetrics}
+              onShowMessage={showMessage}
+              onCopyMessage={(message) => {
+                const target = message ?? state.overlay.currentMessage;
+                if (target) void copyMessage(target);
               }}
               onCopyOverlayUrl={copyOverlayUrl}
+              busyAction={busyAction}
             />
           </div>
         ) : (

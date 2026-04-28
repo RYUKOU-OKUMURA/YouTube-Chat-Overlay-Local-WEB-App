@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import {
   classifyYouTubeError,
   getLiveChatInfo,
+  getViewerMetrics,
   streamLiveChatMessages,
   type ClassifiedYouTubeError
 } from "@/server/youtube/api";
@@ -18,6 +19,7 @@ import type {
   Settings,
   StartBroadcastInput,
   TestMessageInput,
+  ViewerMetrics,
   YouTubeStatus
 } from "@/types";
 
@@ -45,6 +47,8 @@ class TypedEmitter extends EventEmitter {
 }
 
 const maxMessages = 300;
+const maxSuperChats = 100;
+const viewerMetricsIntervalSeconds = 180;
 const initialReconnectDelayMs = 2000;
 const maxReconnectDelayMs = 60000;
 const maxReconnectAttempts = 8;
@@ -88,16 +92,58 @@ function terminalConnectionState(error: ClassifiedYouTubeError): BroadcastStatus
   return error.kind === "liveChatEnded" || error.kind === "liveEnded" ? "ended" : "error";
 }
 
+function idleViewerMetrics(): ViewerMetrics {
+  return {
+    intervalSeconds: viewerMetricsIntervalSeconds,
+    status: "idle"
+  };
+}
+
+function nextViewerMetricsRefreshAt(from = Date.now()) {
+  return new Date(from + viewerMetricsIntervalSeconds * 1000).toISOString();
+}
+
+function viewerMetricsFromValue({
+  concurrentViewers,
+  checkedAt,
+  nextRefreshAt
+}: {
+  concurrentViewers?: number;
+  checkedAt: string;
+  nextRefreshAt?: string;
+}): ViewerMetrics {
+  if (typeof concurrentViewers === "number") {
+    return {
+      concurrentViewers,
+      checkedAt,
+      nextRefreshAt,
+      intervalSeconds: viewerMetricsIntervalSeconds,
+      status: "available"
+    };
+  }
+
+  return {
+    checkedAt,
+    nextRefreshAt,
+    intervalSeconds: viewerMetricsIntervalSeconds,
+    status: "unavailable",
+    message: "視聴者数非表示または取得不可"
+  };
+}
+
 export class AppController {
   readonly events = new TypedEmitter();
 
   private initialized = false;
   private settings!: Settings;
   private messages: ChatMessage[] = [];
+  private superChats: ChatMessage[] = [];
   private fetchedMessageIds = new Set<string>();
   private nextPageToken: string | undefined;
   private streamAbortController: AbortController | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private viewerMetricsTimer: NodeJS.Timeout | null = null;
+  private viewerMetricsRefreshInFlight: Promise<BroadcastStatus> | null = null;
   private streamGeneration = 0;
   private startRequestGeneration = 0;
   private startQueue: Promise<unknown> = Promise.resolve();
@@ -122,7 +168,8 @@ export class AppController {
       isFetchingComments: false,
       currentBroadcastUrl: this.settings.lastBroadcastUrl,
       connectionMode: "stream",
-      connectionState: "stopped"
+      connectionState: "stopped",
+      viewerMetrics: idleViewerMetrics()
     };
     this.youtubeStatus = await getYouTubeStatus();
     this.initialized = true;
@@ -133,6 +180,7 @@ export class AppController {
     return {
       overlayToken: this.settings.overlayToken,
       messages: this.messages,
+      superChats: this.superChats,
       overlay: this.overlayState,
       youtubeStatus: this.youtubeStatus,
       broadcastStatus: this.broadcastStatus,
@@ -218,7 +266,9 @@ export class AppController {
     this.shortStreamCloseCount = 0;
     this.fetchedMessageIds.clear();
     this.messages = [];
+    this.superChats = [];
     this.settings = nextSettings;
+    const metricsCheckedAt = new Date().toISOString();
     this.broadcastStatus = {
       isFetchingComments: true,
       connectionMode: "stream",
@@ -234,10 +284,16 @@ export class AppController {
       scheduledStartTime: info.scheduledStartTime,
       actualStartTime: info.actualStartTime,
       actualEndTime: info.actualEndTime,
+      viewerMetrics: viewerMetricsFromValue({
+        concurrentViewers: info.concurrentViewers,
+        checkedAt: metricsCheckedAt,
+        nextRefreshAt: nextViewerMetricsRefreshAt(Date.parse(metricsCheckedAt))
+      }),
       ...clearBroadcastErrorFields()
     };
     this.events.emit("broadcast:status", this.broadcastStatus);
     await this.emitSync();
+    this.scheduleViewerMetricsRefresh(generation);
     void this.consumeLiveChatStream(generation);
     return this.broadcastStatus;
   }
@@ -251,6 +307,11 @@ export class AppController {
       isFetchingComments: false,
       connectionMode: "stream",
       connectionState: "stopped",
+      viewerMetrics: {
+        ...(this.broadcastStatus.viewerMetrics ?? idleViewerMetrics()),
+        nextRefreshAt: undefined,
+        status: this.broadcastStatus.viewerMetrics?.status ?? "idle"
+      },
       ...clearBroadcastErrorFields()
     };
     this.events.emit("broadcast:status", this.broadcastStatus);
@@ -261,6 +322,78 @@ export class AppController {
   async getMessages() {
     await this.init();
     return this.messages;
+  }
+
+  async refreshViewerMetrics() {
+    await this.init();
+    return this.refreshViewerMetricsOnce(this.streamGeneration, true);
+  }
+
+  private refreshViewerMetricsOnce(generation: number, manual: boolean) {
+    if (this.viewerMetricsRefreshInFlight) {
+      return this.viewerMetricsRefreshInFlight;
+    }
+
+    this.viewerMetricsRefreshInFlight = this.refreshViewerMetricsNow(generation, manual).finally(() => {
+      this.viewerMetricsRefreshInFlight = null;
+    });
+    return this.viewerMetricsRefreshInFlight;
+  }
+
+  private async refreshViewerMetricsNow(generation: number, manual: boolean) {
+    const videoId = this.broadcastStatus.currentVideoId;
+    if (!videoId || !this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments) {
+      return this.broadcastStatus;
+    }
+
+    try {
+      const result = await getViewerMetrics(videoId);
+      if (!this.isCurrentStream(generation) || this.broadcastStatus.currentVideoId !== videoId) {
+        return this.broadcastStatus;
+      }
+
+      const nextRefreshAt = nextViewerMetricsRefreshAt();
+      this.broadcastStatus = {
+        ...this.broadcastStatus,
+        viewerMetrics: {
+          concurrentViewers: result.concurrentViewers,
+          checkedAt: result.checkedAt,
+          nextRefreshAt,
+          intervalSeconds: viewerMetricsIntervalSeconds,
+          status: result.status,
+          message: result.message
+        }
+      };
+      this.events.emit("broadcast:status", this.broadcastStatus);
+      await this.emitSync();
+      if (manual) {
+        this.scheduleViewerMetricsRefresh(generation);
+      }
+      return this.broadcastStatus;
+    } catch (error) {
+      if (!this.isCurrentStream(generation) || this.broadcastStatus.currentVideoId !== videoId) {
+        return this.broadcastStatus;
+      }
+
+      const nextRefreshAt = nextViewerMetricsRefreshAt();
+      this.broadcastStatus = {
+        ...this.broadcastStatus,
+        viewerMetrics: {
+          ...(this.broadcastStatus.viewerMetrics ?? idleViewerMetrics()),
+          checkedAt: new Date().toISOString(),
+          nextRefreshAt,
+          intervalSeconds: viewerMetricsIntervalSeconds,
+          status: "error",
+          message: error instanceof Error ? error.message : "同時視聴者数を取得できませんでした。"
+        }
+      };
+      this.events.emit("broadcast:status", this.broadcastStatus);
+      await this.emitSync();
+      if (manual) {
+        this.scheduleViewerMetricsRefresh(generation);
+      }
+      return this.broadcastStatus;
+    }
   }
 
   async showMessage(messageId: string) {
@@ -361,6 +494,7 @@ export class AppController {
       nextReconnectAt: undefined,
       currentBroadcastUrl: broadcastUrl,
       currentVideoId: videoId,
+      viewerMetrics: idleViewerMetrics(),
       ...broadcastErrorFields(error, "liveChatInfo")
     };
     this.events.emit("broadcast:status", this.broadcastStatus);
@@ -414,6 +548,15 @@ export class AppController {
 
         if (ended) {
           this.clearCurrentAbortController(abortController);
+          this.clearViewerMetricsTimer();
+          this.broadcastStatus = {
+            ...this.broadcastStatus,
+            viewerMetrics: this.broadcastStatus.viewerMetrics
+              ? { ...this.broadcastStatus.viewerMetrics, nextRefreshAt: undefined }
+              : idleViewerMetrics()
+          };
+          this.events.emit("broadcast:status", this.broadcastStatus);
+          await this.emitSync();
           return;
         }
       }
@@ -451,8 +594,12 @@ export class AppController {
         connectionMode: "stream",
         connectionState: terminalConnectionState(classified),
         nextReconnectAt: undefined,
+        viewerMetrics: this.broadcastStatus.viewerMetrics
+          ? { ...this.broadcastStatus.viewerMetrics, nextRefreshAt: undefined }
+          : idleViewerMetrics(),
         ...broadcastErrorFields(classified, "stream")
       };
+      this.clearViewerMetricsTimer();
       this.events.emit("broadcast:status", this.broadcastStatus);
       await this.emitSync();
     }
@@ -505,6 +652,9 @@ export class AppController {
       }
       this.fetchedMessageIds.add(message.platformMessageId);
       this.messages = this.prioritizeRetainedMessages([message, ...this.messages]);
+      if (message.isSuperChat) {
+        this.superChats = [message, ...this.superChats.filter((item) => item.platformMessageId !== message.platformMessageId)].slice(0, maxSuperChats);
+      }
       this.events.emit("comment:new", message);
     }
   }
@@ -545,7 +695,9 @@ export class AppController {
   }
 
   private findMessage(messageId: string) {
-    const message = this.messages.find((candidate) => candidate.id === messageId);
+    const message =
+      this.messages.find((candidate) => candidate.id === messageId) ??
+      this.superChats.find((candidate) => candidate.id === messageId);
     if (!message) {
       throw new Error(`Message was not found: ${messageId}`);
     }
@@ -557,11 +709,15 @@ export class AppController {
     this.messages = this.messages.map((message) =>
       message.id === messageId ? { ...message, displayedAt: now } : message
     );
+    this.superChats = this.superChats.map((message) =>
+      message.id === messageId ? { ...message, displayedAt: now } : message
+    );
   }
 
   private resetActiveStream() {
     this.streamGeneration += 1;
     this.reconnectDelayMs = initialReconnectDelayMs;
+    this.clearViewerMetricsTimer();
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -574,6 +730,29 @@ export class AppController {
     }
 
     return this.streamGeneration;
+  }
+
+  private scheduleViewerMetricsRefresh(generation: number) {
+    this.clearViewerMetricsTimer();
+    if (!this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments || !this.broadcastStatus.currentVideoId) {
+      return;
+    }
+
+    this.viewerMetricsTimer = setTimeout(() => {
+      this.viewerMetricsTimer = null;
+      void this.refreshViewerMetricsOnce(generation, false).then(() => {
+        if (this.isCurrentStream(generation) && this.broadcastStatus.isFetchingComments) {
+          this.scheduleViewerMetricsRefresh(generation);
+        }
+      });
+    }, viewerMetricsIntervalSeconds * 1000);
+  }
+
+  private clearViewerMetricsTimer() {
+    if (this.viewerMetricsTimer) {
+      clearTimeout(this.viewerMetricsTimer);
+      this.viewerMetricsTimer = null;
+    }
   }
 
   private isActiveBroadcastFor(videoId: string) {

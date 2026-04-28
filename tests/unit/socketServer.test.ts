@@ -44,6 +44,7 @@ function makeAppState(overrides: Partial<AppState> = {}): AppState {
   return {
     overlayToken: "overlay-token",
     messages: [baseMessage],
+    superChats: [],
     overlay: makeOverlayState(),
     youtubeStatus: { oauth: "authorized", api: "connected" },
     broadcastStatus: { isFetchingComments: false },
