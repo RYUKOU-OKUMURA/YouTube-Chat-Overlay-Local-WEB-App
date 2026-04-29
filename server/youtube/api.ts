@@ -1,4 +1,5 @@
 import type { Readable } from "node:stream";
+import { TextDecoder } from "node:util";
 import { google } from "googleapis";
 import type { youtube_v3 } from "googleapis";
 import { getAuthorizedClient } from "@/server/youtube/oauth";
@@ -331,14 +332,16 @@ export async function* parseLiveChatStreamResponses(
 
 export class JsonObjectStreamParser {
   private buffer = "";
+  private decoder = new TextDecoder("utf-8");
   private inTopLevelArray = false;
 
   push(chunk: Buffer | string | Uint8Array) {
-    this.buffer += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    this.buffer += typeof chunk === "string" ? chunk : this.decoder.decode(chunk, { stream: true });
     return this.drain(false);
   }
 
   flush() {
+    this.buffer += this.decoder.decode();
     return this.drain(true);
   }
 

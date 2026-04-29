@@ -31,6 +31,31 @@ describe("YouTube live chat stream parser", () => {
     expect(responses[0].items?.[0].snippet?.displayMessage).toBe("hello");
   });
 
+  test("preserves multibyte UTF-8 characters split across buffer chunks", async () => {
+    const message = "こんばんはー。新参者ですがいつも楽しく見させていただいてます♪";
+    const payload = Buffer.from(
+      JSON.stringify({
+        nextPageToken: "token-1",
+        items: [
+          {
+            id: "message-1",
+            snippet: { displayMessage: message, type: "textMessageEvent" },
+            authorDetails: { displayName: "Viewer" }
+          }
+        ]
+      })
+    );
+    const splitAt = payload.indexOf(Buffer.from("だ")) + 1;
+    const responses = [];
+
+    for await (const response of parseLiveChatStreamResponses(chunks([payload.subarray(0, splitAt), payload.subarray(splitAt)]))) {
+      responses.push(response);
+    }
+
+    expect(responses).toHaveLength(1);
+    expect(responses[0].items?.[0].snippet?.displayMessage).toBe(message);
+  });
+
   test("parses multiple JSON responses from one chunk", async () => {
     const responses = [];
 
