@@ -271,7 +271,7 @@ URL:
 
 - コメント取得方式は `liveChat.messages.stream` とする。
 - stream 開始時に liveChatId、pageToken、AbortSignal を渡す。
-- stream から受け取った JSON をパースし、コメント一覧へ正規化する。
+- stream から受け取った JSON object stream または top-level JSON array stream をパースし、コメント一覧へ正規化する。
 - nextPageToken を保持し、再接続時に利用する。
 - 新着コメントは管理画面へ `comment:new` で配信する。
 - 同一 `platformMessageId` は重複表示しない。
@@ -282,7 +282,7 @@ URL:
 - 再接続バックオフは初期2秒、最大60秒とする。
 - 短時間 close が5回続く場合は `connectionState: "error"` で停止する。
 - 正常 batch 受信時は再接続カウンタをリセットする。
-- quota、rate limit、認可エラー、チャット終了、parser/応答形式エラーなどは terminal error として停止する。
+- quota、rate limit、認可エラー、チャット終了、完全なJSONのparse失敗、応答形式エラーなどは terminal error として停止する。stream JSON の途中終了は一時的な network error として再接続する。
 - `BroadcastStatus` は `errorKind`、`errorReason`、`errorPhase`、`errorAction` を保持する。
 
 ### FR-004 コメント一覧
@@ -493,8 +493,8 @@ URL:
 ### 可用性
 
 - Socket.IO はクライアント側の自動再接続に任せる。
-- YouTube stream が network 系エラーで閉じた場合は上限付きでバックオフ再接続する。
-- parser/応答形式エラーは network 再接続扱いにせず停止する。
+- YouTube stream が network 系エラーまたは stream JSON の途中終了で閉じた場合は上限付きでバックオフ再接続する。
+- 完全なJSONのparse失敗や応答形式エラーは network 再接続扱いにせず停止する。
 - 配信終了を検知した場合は取得を停止する。
 
 ### セキュリティ

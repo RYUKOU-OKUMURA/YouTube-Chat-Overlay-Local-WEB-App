@@ -65,7 +65,7 @@ function presetCardStyle(preset: (typeof overlayStylePresets)[number], active: b
 
   if (preset.id === "comic-pop") {
     return {
-      background: "radial-gradient(circle at 88% 28%, rgba(37,99,235,0.18) 0 2px, transparent 2px 9px), #ffffff",
+      background: "#ffffff",
       borderColor: active ? accent : "rgba(37,99,235,0.52)",
       color: "#111827",
       boxShadow: active ? `6px 6px 0 rgba(37,99,235,0.28), 0 0 0 2px ${accent}` : "6px 6px 0 rgba(37,99,235,0.16)"

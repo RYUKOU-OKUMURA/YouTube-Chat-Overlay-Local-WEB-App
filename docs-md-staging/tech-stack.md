@@ -374,7 +374,7 @@ Socket.IO を同一 HTTP server 上の `/socket.io` で動かす。
 
 出力処理:
 
-- JSON object stream を parser で分割
+- JSON object stream と YouTube web stream の top-level JSON array を parser で分割
 - snake_case と camelCase の差を正規化
 - YouTube message を `ChatMessage` に変換
 - Super Chat details を `amountText` と `isSuperChat` に反映
@@ -399,7 +399,7 @@ Socket.IO を同一 HTTP server 上の `/socket.io` で動かす。
 - network
 - unknown
 
-HTTP 5xx、408、`ECONNRESET`、`ETIMEDOUT`、socket/transport 系など明確な通信エラーだけ retryable として再接続する。quota、rate limit、認可エラー、チャット終了、parser/応答形式エラーなどは terminal error として停止する。
+HTTP 5xx、408、`ECONNRESET`、`ETIMEDOUT`、socket/transport 系、stream JSON の途中終了など明確な一時的 stream 切断だけ retryable として再接続する。quota、rate limit、認可エラー、チャット終了、完全なJSONのparse失敗、応答形式エラーなどは terminal error として停止する。
 
 `BroadcastStatus` は `errorKind`、`errorReason`、`errorPhase`、`errorAction`、`scheduledStartTime`、`actualStartTime`、`actualEndTime` を保持し、管理画面で次に取る操作を表示する。
 

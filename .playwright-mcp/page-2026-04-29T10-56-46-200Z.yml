@@ -1,0 +1,5 @@
+- generic [ref=e4]:
+  - generic [ref=e6]:
+    - heading "管理画面" [level=2] [ref=e7]
+    - paragraph [ref=e8]: ローカル状態を読み込み中...
+  - generic [ref=e10]: 設定とSocket状態を読み込んでいます。

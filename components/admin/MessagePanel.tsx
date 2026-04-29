@@ -7,12 +7,20 @@ import { Panel } from "@/components/common/Panel";
 
 export type CommentView = "all" | "undisplayed" | "important";
 
+function formatPaidEventLabel(message: ChatMessage) {
+  return message.messageType === "superStickerEvent" ? "Super Sticker" : "Super Chat";
+}
+
+function isPaidEvent(message: ChatMessage) {
+  return message.isSuperChat || message.messageType === "superStickerEvent";
+}
+
 function formatMessageMeta(message: ChatMessage) {
   const tags = [
     message.isOwner ? "配信者" : null,
     message.isModerator ? "モデレーター" : null,
     message.isMember ? "メンバー" : null,
-    message.isSuperChat ? "Super Chat" : null
+    isPaidEvent(message) ? formatPaidEventLabel(message) : null
   ].filter(Boolean);
   if (tags.length) return tags.join(" · ");
   if (message.messageType === "testMessage") return "テストコメント";
@@ -144,7 +152,9 @@ export function MessagePanel({
               orderedMessages.map((message) => {
                 const active = message.id === activeMessageId;
                 const isLatest = message.id === latestMessageId;
-                const rowClassName = message.isSuperChat
+                const paidEventLabel = formatPaidEventLabel(message);
+                const paidEvent = isPaidEvent(message);
+                const rowClassName = paidEvent
                   ? active
                     ? "border-red-600 bg-red-50/80 ring-1 ring-amber-300"
                     : "border-amber-400 bg-amber-50/90 hover:bg-amber-100/70"
@@ -182,15 +192,15 @@ export function MessagePanel({
                           {message.displayedAt ? <Badge tone="blue" className="border-0 bg-sky-100">表示済み</Badge> : null}
                           {isLatest ? <Badge tone="slate" className="border-0 bg-slate-950 text-white">最新</Badge> : null}
                         </div>
-                        {message.isSuperChat ? (
+                        {paidEvent ? (
                           <div className="mt-2 inline-flex rounded-full bg-amber-500 px-3 py-1 text-sm font-bold text-white shadow-sm shadow-amber-200">
-                            {message.amountText ?? "Super Chat"}
+                            {message.amountText ?? paidEventLabel}
                           </div>
                         ) : null}
                         <p className="mt-1 whitespace-pre-wrap text-[15px] leading-6 text-slate-900" style={messagePreviewStyle}>
                           {message.messageText}
                         </p>
-                        {!message.isSuperChat && message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
+                        {!paidEvent && message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
                       </button>
                       <div className="mt-2 flex flex-wrap gap-2 opacity-100 transition lg:opacity-70 lg:group-hover:opacity-100">
                         <Button

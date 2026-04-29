@@ -59,6 +59,14 @@ function authorInitials(authorName: string) {
     .slice(0, 2);
 }
 
+function formatPaidEventLabel(message: ChatMessage) {
+  return message.messageType === "superStickerEvent" ? "Super Sticker" : "Super Chat";
+}
+
+function isPaidEvent(message: ChatMessage) {
+  return message.isSuperChat || message.messageType === "superStickerEvent";
+}
+
 function cardPlacement(position: Theme["cardPosition"], padding: number) {
   const shared = { position: "absolute" as const, inset: "auto" as const };
 
@@ -187,8 +195,8 @@ function cardVisualStyle(theme: Theme): CSSProperties {
       return {
         ...base,
         border: `5px solid ${theme.accentColor}`,
-        backgroundImage: "radial-gradient(circle at 88% 26%, rgba(37, 99, 235, 0.18) 0 2px, transparent 2px 9px)",
-        boxShadow: `10px 10px 0 rgba(37, 99, 235, 0.34), 0 0 0 3px rgba(15,23,42,0.95), 0 20px 36px rgba(15, 23, 42, 0.22)`
+        backgroundImage: "none",
+        boxShadow: "10px 10px 0 rgba(37, 99, 235, 0.26), 0 20px 36px rgba(15, 23, 42, 0.18)"
       };
     default:
       return base;
@@ -338,12 +346,6 @@ function OverlayCard({
           <span className="h-3 w-3 rounded-full bg-sky-300" />
         </div>
       ) : null}
-      {isComic ? (
-        <div className="absolute -right-7 top-4 flex rotate-12 gap-2">
-          <span className="h-10 w-3 -rotate-12 rounded-full bg-slate-950" />
-          <span className="h-8 w-3 rotate-12 rounded-full bg-slate-950" />
-        </div>
-      ) : null}
       <div
         className={contentClassName}
         style={{
@@ -396,7 +398,7 @@ function OverlayCard({
             {message.isOwner ? <OverlayBadge accent>配信者</OverlayBadge> : null}
             {message.isModerator ? <OverlayBadge>モデレーター</OverlayBadge> : null}
             {message.isMember ? <OverlayBadge>メンバー</OverlayBadge> : null}
-            {message.isSuperChat ? <OverlayBadge accent>{message.amountText ?? "Super Chat"}</OverlayBadge> : null}
+            {isPaidEvent(message) ? <OverlayBadge accent>{message.amountText ?? formatPaidEventLabel(message)}</OverlayBadge> : null}
             {message.messageType === "testMessage" ? <OverlayBadge accent>テスト</OverlayBadge> : null}
             {eventName === "show" ? <OverlayBadge>表示中</OverlayBadge> : null}
             {eventName === "test" ? <OverlayBadge accent>テスト表示</OverlayBadge> : null}
@@ -448,6 +450,7 @@ function SuperChatCard({
   const cardKey = messageKey(message);
   const tier = getSuperChatTier(message.amountText);
   const initials = authorInitials(message.authorName);
+  const paidEventLabel = formatPaidEventLabel(message);
   const animationType = theme.animationType;
   const width = Math.min(theme.cardWidth, isCompact ? 680 : 760);
   const radius = Math.max(16, Math.min(theme.borderRadius, 30));
@@ -578,7 +581,7 @@ function SuperChatCard({
           className="max-w-[38%] shrink-0 truncate rounded-full px-3 py-1 text-[0.74em] font-black leading-none text-slate-950 shadow-sm ring-1 ring-black/10"
           style={{ background: "rgba(255,255,255,0.76)" }}
         >
-          {message.amountText ?? "Super Chat"}
+          {message.amountText ?? paidEventLabel}
         </div>
       </div>
 
@@ -588,7 +591,7 @@ function SuperChatCard({
           style={{ background: tier.colors.accentSoft, color: tier.colors.accent }}
         >
           <Sparkles className="h-3.5 w-3.5" aria-hidden />
-          Super Chat
+          {paidEventLabel}
         </div>
         <p
           className="whitespace-pre-wrap text-left text-[0.95em] font-bold leading-[1.42]"
@@ -713,7 +716,7 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
         <div className="pointer-events-none" style={placement}>
           <AnimatePresence initial={false} mode="wait">
             {visibleMessage && overlayState ? (
-              visibleMessage.isSuperChat ? (
+              isPaidEvent(visibleMessage) ? (
                 <SuperChatCard
                   key={currentKey ?? visibleMessage.id}
                   message={visibleMessage}

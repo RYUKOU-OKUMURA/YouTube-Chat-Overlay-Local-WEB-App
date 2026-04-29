@@ -70,7 +70,7 @@ export function BroadcastPanel({
             autoComplete="off"
             value={broadcastUrl}
             onChange={(event) => setBroadcastUrl(event.target.value)}
-            className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
+            className="h-10 w-full min-w-0 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
             placeholder="https://www.youtube.com/watch?v=..."
           />
         </Field>
@@ -85,24 +85,32 @@ export function BroadcastPanel({
             OBS URLをコピー
           </Button>
         </div>
-        <div className="grid gap-2 text-xs text-slate-600">
+        <div className="grid min-w-0 gap-2 text-xs text-slate-600">
           <div className="flex flex-wrap gap-2">
             <span className="rounded-full bg-slate-100 px-2 py-1">取得中: {broadcastStatus.isFetchingComments ? "はい" : "いいえ"}</span>
             <span className="rounded-full bg-slate-100 px-2 py-1">方式: {broadcastStatus.connectionMode ?? "stream"}</span>
             <span className="rounded-full bg-slate-100 px-2 py-1">接続: {connectionLabel(broadcastStatus.connectionState)}</span>
-            {broadcastStatus.currentVideoId ? <span className="rounded-full bg-slate-100 px-2 py-1">動画ID: {broadcastStatus.currentVideoId}</span> : null}
-            {broadcastStatus.liveChatId ? <span className="rounded-full bg-slate-100 px-2 py-1">チャットID: {broadcastStatus.liveChatId}</span> : null}
+            {broadcastStatus.currentVideoId ? (
+              <span className="inline-block max-w-full truncate rounded-full bg-slate-100 px-2 py-1" title={`動画ID: ${broadcastStatus.currentVideoId}`}>
+                動画ID: {broadcastStatus.currentVideoId}
+              </span>
+            ) : null}
+            {broadcastStatus.liveChatId ? (
+              <span className="inline-block max-w-full truncate rounded-full bg-slate-100 px-2 py-1" title={`チャットID: ${broadcastStatus.liveChatId}`}>
+                チャットID: {broadcastStatus.liveChatId}
+              </span>
+            ) : null}
           </div>
-          {broadcastStatus.streamTitle ? <div>配信タイトル: {broadcastStatus.streamTitle}</div> : null}
-          {broadcastStatus.channelName ? <div>チャンネル: {broadcastStatus.channelName}</div> : null}
+          {broadcastStatus.streamTitle ? <div className="min-w-0 break-words">配信タイトル: {broadcastStatus.streamTitle}</div> : null}
+          {broadcastStatus.channelName ? <div className="min-w-0 break-words">チャンネル: {broadcastStatus.channelName}</div> : null}
           {broadcastStatus.error ? (
             <div className={`grid gap-1 rounded-lg border px-3 py-2 text-sm ${errorToneClass(broadcastStatus.errorKind)}`}>
               <div className="flex items-center gap-2 font-semibold">
                 <AlertTriangle className="h-4 w-4" />
                 {errorTitle}
               </div>
-              <div>{broadcastStatus.error}</div>
-              {broadcastStatus.errorAction ? <div className="text-xs opacity-85">{broadcastStatus.errorAction}</div> : null}
+              <div className="break-words">{broadcastStatus.error}</div>
+              {broadcastStatus.errorAction ? <div className="break-words text-xs opacity-85">{broadcastStatus.errorAction}</div> : null}
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs opacity-75">
                 {scheduledStartTime ? <span>予定開始: {scheduledStartTime}</span> : null}
                 {actualStartTime ? <span>開始: {actualStartTime}</span> : null}
@@ -112,7 +120,7 @@ export function BroadcastPanel({
           ) : null}
           {broadcastStatus.lastFetchedAt ? <div>最終取得: {new Date(broadcastStatus.lastFetchedAt).toLocaleString()}</div> : null}
           {broadcastStatus.lastReceivedAt ? <div>最終受信: {new Date(broadcastStatus.lastReceivedAt).toLocaleString()}</div> : null}
-          {broadcastStatus.currentBroadcastUrl ? <div>現在のURL: {broadcastStatus.currentBroadcastUrl}</div> : null}
+          {broadcastStatus.currentBroadcastUrl ? <div className="min-w-0 break-all">現在のURL: {broadcastStatus.currentBroadcastUrl}</div> : null}
         </div>
         <Button variant="ghost" size="sm" icon={<Copy className="h-3.5 w-3.5" />} onClick={onCopyOverlayUrl}>
           OBS URLをもう一度コピー

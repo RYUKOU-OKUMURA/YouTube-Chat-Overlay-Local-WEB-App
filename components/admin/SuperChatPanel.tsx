@@ -10,6 +10,10 @@ function formatChatTime(value: string) {
   return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatPaidEventLabel(message: ChatMessage) {
+  return message.messageType === "superStickerEvent" ? "Super Sticker" : "Super Chat";
+}
+
 export function SuperChatPanel({
   superChats,
   activeMessageId,
@@ -25,8 +29,8 @@ export function SuperChatPanel({
 }) {
   return (
     <Panel
-      title="Super Chat履歴"
-      subtitle="配信中に受け取ったSuper Chatを最大100件保持します。"
+      title="Super Chat / Sticker履歴"
+      subtitle="配信中に受け取ったSuper ChatとSuper Stickerを最大100件保持します。"
       className="overflow-hidden rounded-2xl bg-white"
       actions={<Badge tone={superChats.length > 0 ? "amber" : "slate"}>{superChats.length}件</Badge>}
     >
@@ -35,6 +39,7 @@ export function SuperChatPanel({
           <div className="grid gap-2 p-3">
             {superChats.map((message) => {
               const active = message.id === activeMessageId;
+              const paidEventLabel = formatPaidEventLabel(message);
               return (
                 <div
                   key={message.id}
@@ -48,7 +53,8 @@ export function SuperChatPanel({
                     <div className="shrink-0 text-[11px] text-slate-500">{formatChatTime(message.publishedAt)}</div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-amber-500 px-2.5 py-1 text-xs font-bold text-white">{message.amountText ?? "Super Chat"}</span>
+                    <span className="rounded-full bg-amber-500 px-2.5 py-1 text-xs font-bold text-white">{message.amountText ?? paidEventLabel}</span>
+                    <Badge tone="amber" className="border-0 bg-amber-100">{paidEventLabel}</Badge>
                     {active ? <Badge tone="amber" className="border-0 bg-amber-100">表示中</Badge> : null}
                     {message.displayedAt ? <Badge tone="blue" className="border-0 bg-sky-100">表示済み</Badge> : null}
                   </div>
@@ -71,7 +77,7 @@ export function SuperChatPanel({
             })}
           </div>
         ) : (
-          <div className="px-4 py-8 text-center text-sm text-slate-500">Super Chatはまだありません。</div>
+          <div className="px-4 py-8 text-center text-sm text-slate-500">Super Chat / Stickerはまだありません。</div>
         )}
       </div>
     </Panel>

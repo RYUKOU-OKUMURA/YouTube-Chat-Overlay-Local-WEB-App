@@ -121,6 +121,21 @@ export class YouTubeStreamParserError extends YouTubeDiagnosticError {
   }
 }
 
+export class YouTubeStreamTruncatedError extends YouTubeDiagnosticError {
+  constructor(message = "YouTubeライブチャットのJSON応答が途中で終了しました。", reason = "incomplete_stream_json") {
+    super({
+      kind: "network",
+      message,
+      reason,
+      phase: "stream",
+      action: "YouTube側または通信経路でストリームが途中切断されました。自動で再接続します。",
+      retryable: true,
+      status: 502
+    });
+    this.name = "YouTubeStreamTruncatedError";
+  }
+}
+
 export class YouTubeStreamResponseShapeError extends YouTubeDiagnosticError {
   constructor(message = "YouTubeライブチャットの応答形式が想定と異なります。", reason = "invalid_stream_response_shape") {
     super({
@@ -316,6 +331,7 @@ export async function* parseLiveChatStreamResponses(
 
 export class JsonObjectStreamParser {
   private buffer = "";
+  private inTopLevelArray = false;
 
   push(chunk: Buffer | string | Uint8Array) {
     this.buffer += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
@@ -335,10 +351,43 @@ export class JsonObjectStreamParser {
         return values;
       }
 
+      if (this.inTopLevelArray) {
+        if (this.buffer.startsWith(",")) {
+          this.buffer = this.buffer.slice(1);
+          continue;
+        }
+        if (this.buffer.startsWith("]")) {
+          this.buffer = this.buffer.slice(1);
+          this.inTopLevelArray = false;
+          continue;
+        }
+        if (!this.buffer.startsWith("{")) {
+          if (flush) {
+            throw new YouTubeStreamParserError(
+              "YouTubeライブチャットのJSON配列を解析できませんでした。",
+              "unexpected_stream_json_token"
+            );
+          }
+          return values;
+        }
+      } else if (this.buffer.startsWith("[")) {
+        this.inTopLevelArray = true;
+        this.buffer = this.buffer.slice(1);
+        continue;
+      } else if (!this.buffer.startsWith("{")) {
+        if (flush) {
+          throw new YouTubeStreamParserError(
+            "YouTubeライブチャットのJSON応答を解析できませんでした。",
+            "unexpected_stream_json_token"
+          );
+        }
+        return values;
+      }
+
       const end = findCompleteJsonObjectEnd(this.buffer);
       if (end === null) {
         if (flush) {
-          throw new YouTubeStreamParserError(
+          throw new YouTubeStreamTruncatedError(
             "YouTubeライブチャットのJSON応答が途中で終了しました。",
             "incomplete_stream_json"
           );
@@ -492,6 +541,10 @@ export function mapLiveChatMessage(item: youtube_v3.Schema$LiveChatMessage): Cha
   const snippet = item.snippet;
   const author = item.authorDetails;
   const superChat = snippet?.superChatDetails;
+  const superSticker = snippet?.superStickerDetails;
+  const paidDetails = superChat ?? superSticker;
+  const superStickerAltText = superSticker?.superStickerMetadata?.altText ?? undefined;
+  const displayMessage = snippet?.displayMessage?.trim() ? snippet.displayMessage : (superStickerAltText ?? "");
   const id = item.id ?? crypto.randomUUID();
   return {
     id,
@@ -499,13 +552,13 @@ export function mapLiveChatMessage(item: youtube_v3.Schema$LiveChatMessage): Cha
     authorName: author?.displayName ?? "Unknown",
     authorImageUrl: author?.profileImageUrl ?? undefined,
     authorChannelId: author?.channelId ?? undefined,
-    messageText: snippet?.displayMessage ?? "",
+    messageText: displayMessage,
     messageType: snippet?.type ?? "textMessageEvent",
     isMember: Boolean(author?.isChatSponsor),
     isModerator: Boolean(author?.isChatModerator),
     isOwner: Boolean(author?.isChatOwner),
-    isSuperChat: Boolean(superChat),
-    amountText: superChat?.amountDisplayString ?? undefined,
+    isSuperChat: Boolean(paidDetails) || snippet?.type === "superStickerEvent",
+    amountText: paidDetails?.amountDisplayString ?? undefined,
     publishedAt: snippet?.publishedAt ?? new Date().toISOString()
   };
 }
@@ -547,6 +600,16 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
     : isRecord(snippet?.super_chat_details)
       ? snippet?.super_chat_details
       : undefined;
+  const superSticker = isRecord(snippet?.superStickerDetails)
+    ? snippet?.superStickerDetails
+    : isRecord(snippet?.super_sticker_details)
+      ? snippet?.super_sticker_details
+      : undefined;
+  const superStickerMetadata = isRecord(superSticker?.superStickerMetadata)
+    ? superSticker?.superStickerMetadata
+    : isRecord(superSticker?.super_sticker_metadata)
+      ? superSticker?.super_sticker_metadata
+      : undefined;
 
   return {
     ...value,
@@ -572,6 +635,24 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
                 ...superChat,
                 amountDisplayString:
                   readString(superChat.amountDisplayString) ?? readString(superChat.amount_display_string) ?? undefined
+              }
+            : undefined,
+          superStickerDetails: superSticker
+            ? {
+                ...superSticker,
+                amountDisplayString:
+                  readString(superSticker.amountDisplayString) ?? readString(superSticker.amount_display_string) ?? undefined,
+                superStickerMetadata: superStickerMetadata
+                  ? {
+                      ...superStickerMetadata,
+                      altText: readString(superStickerMetadata.altText) ?? readString(superStickerMetadata.alt_text) ?? undefined,
+                      altTextLanguage:
+                        readString(superStickerMetadata.altTextLanguage) ??
+                        readString(superStickerMetadata.alt_text_language) ??
+                        undefined,
+                      stickerId: readString(superStickerMetadata.stickerId) ?? readString(superStickerMetadata.sticker_id) ?? undefined
+                    }
+                  : undefined
               }
             : undefined
         }

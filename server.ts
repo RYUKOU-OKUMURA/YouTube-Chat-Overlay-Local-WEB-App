@@ -16,6 +16,16 @@ await app.prepare();
 await appController.init();
 
 const httpServer = createServer((req, res) => {
+  if (req.url?.startsWith("/_next/static/")) {
+    const setHeader = res.setHeader.bind(res);
+    res.setHeader = (name, value) => {
+      if (name.toLowerCase() === "cache-control") {
+        return setHeader(name, "no-store, no-cache, must-revalidate, proxy-revalidate");
+      }
+      return setHeader(name, value);
+    };
+  }
+
   void handle(req, res);
 });
 

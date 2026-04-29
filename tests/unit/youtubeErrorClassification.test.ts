@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   YouTubeStreamParserError,
   YouTubeStreamResponseShapeError,
+  YouTubeStreamTruncatedError,
   classifyYouTubeError,
   getLiveChatInfo,
   getViewerMetrics
@@ -117,6 +118,16 @@ describe("classifyYouTubeError", () => {
     ).toMatchObject({
       kind: "network",
       retryable: true
+    });
+  });
+
+  test("treats truncated stream JSON as retryable network errors", () => {
+    expect(classifyYouTubeError(new YouTubeStreamTruncatedError())).toMatchObject({
+      kind: "network",
+      phase: "stream",
+      reason: "incomplete_stream_json",
+      retryable: true,
+      action: expect.stringContaining("自動で再接続")
     });
   });
 

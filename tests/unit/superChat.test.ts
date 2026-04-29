@@ -58,6 +58,37 @@ describe("YouTube live chat mapping", () => {
     });
   });
 
+  test("maps Super Sticker details into paid ChatMessage fields", () => {
+    const message = mapLiveChatMessage({
+      id: "live-chat-sticker-1",
+      snippet: {
+        displayMessage: "",
+        type: "superStickerEvent",
+        publishedAt: "2026-04-27T12:03:00.000Z",
+        superStickerDetails: {
+          amountDisplayString: "¥300",
+          superStickerMetadata: {
+            altText: "Hands doing the sign of the horns with sparkles around"
+          }
+        }
+      },
+      authorDetails: {
+        displayName: "ステッカー視聴者"
+      }
+    });
+
+    expect(message).toMatchObject({
+      id: "live-chat-sticker-1",
+      platformMessageId: "live-chat-sticker-1",
+      authorName: "ステッカー視聴者",
+      messageText: "Hands doing the sign of the horns with sparkles around",
+      messageType: "superStickerEvent",
+      isSuperChat: true,
+      amountText: "¥300",
+      publishedAt: "2026-04-27T12:03:00.000Z"
+    });
+  });
+
   test("handles missing author and display message fields", () => {
     const message = mapLiveChatMessage({
       id: "live-chat-2",

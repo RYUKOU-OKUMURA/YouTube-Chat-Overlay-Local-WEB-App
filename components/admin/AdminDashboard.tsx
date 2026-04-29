@@ -415,7 +415,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
 
   return (
     <div className="min-h-screen bg-zinc-100 px-4 py-4 text-slate-900">
-      <div className="mx-auto flex max-w-7xl flex-col gap-4">
+      <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-4">
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-5 py-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -529,8 +529,8 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
             />
           </div>
         ) : (
-          <div className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
-            <div className="grid gap-4">
+          <div className="grid gap-4 xl:grid-cols-[minmax(420px,460px)_minmax(0,1fr)]">
+            <div className="grid min-w-0 gap-4">
               <OAuthPanel youtubeStatus={state.youtubeStatus} onConnect={connectYouTube} onDisconnect={disconnectYouTube} busy={busyAction === "oauth"} />
               <BroadcastPanel
                 broadcastUrl={broadcastUrl}
@@ -550,10 +550,12 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
                 onCopyOverlayUrl={copyOverlayUrl}
               />
             </div>
-            <SettingsPanel
-              settings={{ theme: state.overlay.theme }}
-              onPatchSettings={patchSettings}
-            />
+            <div className="min-w-0">
+              <SettingsPanel
+                settings={{ theme: state.overlay.theme }}
+                onPatchSettings={patchSettings}
+              />
+            </div>
           </div>
         )}
       </div>

@@ -110,7 +110,7 @@ YouTube ライブ映像プレビューは管理画面の操作画面だけに表
 - 同一 `platformMessageId` は重複表示しません。
 - 表示したコメントは自動消去されません。
 - 同じ videoId の開始操作はサーバー側で冪等化し、開始処理は直列化します。
-- stream 再接続は最大8回、初期2秒、最大60秒のバックオフで行います。5秒未満の短時間 close が続く場合は、batch 受信の有無にかかわらずエラーとして停止します。
+- stream 再接続は最大8回、初期2秒、最大60秒のバックオフで行います。YouTube の top-level JSON array stream を batch ごとに分割し、JSON応答の途中終了は一時的な stream 切断として自動再接続します。5秒未満の短時間 close が続く場合は、batch 受信の有無にかかわらずエラーとして停止します。
 - YouTube 接続解除時は、既存のコメント取得 stream も停止します。
 - ライブ未開始、終了済み、チャット無効、認可不足、parser/応答形式エラー、通信エラーは区別して表示します。
 - 管理画面は初回接続と明示同期で full state を受け取り、通常のコメント流入中は `comment:new` と `broadcast:status` の差分で更新します。OBS overlay は overlay state のみを Socket.IO で同期します。

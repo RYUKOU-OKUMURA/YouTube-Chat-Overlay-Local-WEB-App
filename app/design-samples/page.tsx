@@ -93,8 +93,8 @@ function previewFrameStyle(theme: Partial<Theme>) {
     return {
       ...base,
       border: `5px solid ${accent}`,
-      backgroundImage: "radial-gradient(circle at 88% 26%, rgba(37, 99, 235, 0.18) 0 2px, transparent 2px 9px)",
-      boxShadow: "10px 10px 0 rgba(37, 99, 235, 0.34), 0 0 0 3px rgba(15,23,42,0.95), 0 20px 36px rgba(15, 23, 42, 0.22)"
+      backgroundImage: "none",
+      boxShadow: "10px 10px 0 rgba(37, 99, 235, 0.26), 0 20px 36px rgba(15, 23, 42, 0.18)"
     };
   }
   return { ...base, boxShadow: "0 20px 45px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(255, 255, 255, 0.08)" };

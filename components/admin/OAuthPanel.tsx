@@ -25,9 +25,9 @@ export function OAuthPanel({
       actions={<Badge tone={needsReconnect ? "amber" : connected ? "green" : "amber"}>{needsReconnect ? "再接続推奨" : connected ? "認可済み" : "未認可"}</Badge>}
     >
       <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-2 text-sm text-slate-700">
-          {connected && !needsReconnect ? <ShieldCheck className="h-4 w-4 text-emerald-600" /> : <ShieldAlert className="h-4 w-4 text-amber-600" />}
-          <span className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2 text-sm text-slate-700">
+          {connected && !needsReconnect ? <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" /> : <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />}
+          <span className="min-w-0 break-words">
             API状態: <strong>{apiLabel}</strong>
             {youtubeStatus.reason ? <span className="text-slate-500"> · {youtubeStatus.reason}</span> : null}
           </span>

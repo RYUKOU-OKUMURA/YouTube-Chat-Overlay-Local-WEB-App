@@ -157,14 +157,56 @@ describe("AppController stream lifecycle", () => {
     });
   });
 
+  test("reconnects after truncated stream JSON responses", async () => {
+    vi.useFakeTimers();
+    const calls: Array<{ pageToken?: string }> = [];
+    const truncatedError = {
+      classified: {
+        kind: "network",
+        message: "YouTubeライブチャットのJSON応答が途中で終了しました。",
+        retryable: true,
+        reason: "incomplete_stream_json",
+        phase: "stream",
+        action: "YouTube側または通信経路でストリームが途中切断されました。自動で再接続します。"
+      }
+    };
+    mocks.streamLiveChatMessages.mockImplementation(async function* (input: { pageToken?: string }) {
+      calls.push(input);
+      if (calls.length === 1) {
+        throw truncatedError;
+      }
+      yield { messages: [message("after-truncated-json")], nextPageToken: "token-after-truncated-json" };
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await vi.waitFor(async () => {
+      expect((await controller.getState()).broadcastStatus).toMatchObject({
+        isFetchingComments: true,
+        connectionState: "reconnecting",
+        errorKind: "network",
+        errorReason: "incomplete_stream_json",
+        error: "YouTubeライブチャットのJSON応答が途中で終了しました。"
+      });
+    });
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    expect((await controller.getMessages()).map((item) => item.id)).toContain("after-truncated-json");
+    await controller.stopBroadcast();
+  });
+
   test("does not reconnect terminal parser errors", async () => {
     vi.useFakeTimers();
     const parserError = {
       classified: {
         kind: "parser",
-        message: "YouTubeライブチャットのJSON応答が途中で終了しました。",
+        message: "YouTubeライブチャットのJSON応答を解析できませんでした。",
         retryable: false,
-        reason: "incomplete_stream_json",
+        reason: "invalid_stream_json",
         phase: "stream",
         action: "コメント取得を停止しました。"
       }
@@ -182,7 +224,7 @@ describe("AppController stream lifecycle", () => {
         isFetchingComments: false,
         connectionState: "error",
         errorKind: "parser",
-        errorReason: "incomplete_stream_json",
+        errorReason: "invalid_stream_json",
         errorAction: "コメント取得を停止しました。"
       });
     });
