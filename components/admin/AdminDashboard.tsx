@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { Copy, MonitorCog, RefreshCcw, SlidersHorizontal, TestTube2, BadgeJapaneseYen } from "lucide-react";
+import { BadgeJapaneseYen, Copy, MonitorCog, RefreshCcw, SlidersHorizontal, TestTube2 } from "lucide-react";
 import type { AppState, BroadcastStatus, ChatMessage, Settings, Theme, YouTubeStatus } from "@/types";
 import { socketEvents } from "@/types";
 import { isImportantMessage, maxRetainedSuperChats, prioritizeRetainedMessages } from "@/lib/messageRetention";
@@ -34,6 +34,7 @@ type SettingsPatch = {
 };
 
 const socketSyncFallbackDelayMs = 1200;
+const compactModeStorageKey = "admin-control-compact-mode";
 
 export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   const [state, setState] = useState<DashboardState | null>(null);
@@ -43,12 +44,27 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   const [broadcastUrl, setBroadcastUrl] = useState("");
   const [search, setSearch] = useState("");
   const [commentView, setCommentView] = useState<CommentView>("all");
-  const [autoscroll, setAutoscroll] = useState(true);
+  const [compactMode, setCompactModeState] = useState(false);
+  const [newMessageCount, setNewMessageCount] = useState(0);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const socketSyncVersionRef = useRef(0);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const previousLatestMessageIdRef = useRef<string | null>(null);
+  const messagesInitializedRef = useRef(false);
+  const settingsPanelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    window.queueMicrotask(() => {
+      setCompactModeState(window.localStorage.getItem(compactModeStorageKey) === "true");
+    });
+  }, []);
+
+  const setCompactMode = useCallback((value: boolean) => {
+    setCompactModeState(value);
+    window.localStorage.setItem(compactModeStorageKey, String(value));
+  }, []);
 
   const applyAppState = useCallback((nextState: AppState) => {
     const nextBroadcastUrl = nextState.broadcastStatus.currentBroadcastUrl ?? "";
@@ -154,10 +170,53 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
     };
   }, [applyAppState]);
 
-  useEffect(() => {
-    if (!autoscroll || !listRef.current) return;
+  const jumpToLatest = useCallback(() => {
+    if (!listRef.current) return;
     listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [autoscroll, state?.messages.length, search, commentView]);
+    setNewMessageCount(0);
+  }, []);
+
+  const updateNewMessageCount = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
+    if (distanceFromBottom < 96) {
+      setNewMessageCount(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!state) return;
+
+    const latestMessageId = state.messages[0]?.id ?? null;
+    if (!messagesInitializedRef.current) {
+      messagesInitializedRef.current = true;
+      previousLatestMessageIdRef.current = latestMessageId;
+      return;
+    }
+
+    if (latestMessageId && latestMessageId !== previousLatestMessageIdRef.current) {
+      const previousIndex = previousLatestMessageIdRef.current
+        ? state.messages.findIndex((message) => message.id === previousLatestMessageIdRef.current)
+        : -1;
+      const addedCount = previousIndex > 0 ? previousIndex : 1;
+      const list = listRef.current;
+      const distanceFromBottom = list ? list.scrollHeight - list.scrollTop - list.clientHeight : 0;
+
+      if (distanceFromBottom >= 96) {
+        setNewMessageCount((current) => current + addedCount);
+      }
+    }
+
+    previousLatestMessageIdRef.current = latestMessageId;
+  }, [state]);
+
+  function openThemeSettings() {
+    setActiveView("admin");
+    window.setTimeout(() => {
+      settingsPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }
 
   const searchMatchedMessages = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -497,15 +556,21 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
             <MessagePanel
               messages={filteredMessages}
+              activeMessage={state.overlay.currentMessage}
               activeMessageId={state.overlay.currentMessage?.id ?? null}
               latestMessageId={latestMessageId}
               search={search}
               setSearch={setSearch}
               commentView={commentView}
               setCommentView={setCommentView}
-              autoscroll={autoscroll}
-              setAutoscroll={setAutoscroll}
+              onJumpToLatest={jumpToLatest}
+              newMessageCount={newMessageCount}
+              onListScroll={updateNewMessageCount}
+              onOpenThemeSettings={openThemeSettings}
+              compactMode={compactMode}
+              setCompactMode={setCompactMode}
               onShowMessage={showMessage}
+              onHideActiveMessage={hideOverlay}
               onCopyMessage={copyMessage}
               busyAction={busyAction}
               listRef={listRef}
@@ -526,6 +591,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               }}
               onCopyOverlayUrl={copyOverlayUrl}
               busyAction={busyAction}
+              compactMode={compactMode}
             />
           </div>
         ) : (
@@ -550,7 +616,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
                 onCopyOverlayUrl={copyOverlayUrl}
               />
             </div>
-            <div className="min-w-0">
+            <div ref={settingsPanelRef} className="min-w-0 scroll-mt-4">
               <SettingsPanel
                 settings={{ theme: state.overlay.theme }}
                 onPatchSettings={patchSettings}

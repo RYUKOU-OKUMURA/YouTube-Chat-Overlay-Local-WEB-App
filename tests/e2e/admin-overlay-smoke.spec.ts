@@ -28,6 +28,12 @@ test.describe("admin/overlay smoke", () => {
 
     await page.getByRole("button", { name: "操作画面" }).click();
     await expect(page.getByRole("button", { name: "固定" })).toHaveCount(0);
+    await page.getByRole("button", { name: "表示テーマ設定へ移動" }).click();
+    await expect(page.getByRole("heading", { name: "表示・テーマ設定" })).toBeVisible();
+    await page.getByRole("button", { name: "操作画面" }).click();
+    await page.getByRole("button", { name: "コンパクト表示" }).click();
+    await expect(page.getByRole("button", { name: "通常表示に戻す" })).toBeVisible();
+    await page.getByRole("button", { name: "通常表示に戻す" }).click();
 
     const overlayPage = await context.newPage();
     await overlayPage.goto(`/overlay/${settings.data.overlayToken}`);
@@ -52,7 +58,7 @@ test.describe("admin/overlay smoke", () => {
     await page.getByRole("button", { name: "非表示" }).first().click();
     await expect(overlayMessage).toBeHidden();
 
-    await testMessageCard.getByRole("button", { name: "表示" }).click();
+    await testMessageCard.getByRole("button", { name: "コメントをOBSに表示" }).click();
     await expect(page.getByText("コメントを表示しました。")).toBeVisible();
     await expect(overlayMessage).toBeVisible();
     await page.waitForTimeout(3500);
@@ -106,6 +112,42 @@ test.describe("admin/overlay smoke", () => {
     await superChatHistoryPanel.getByRole("button", { name: "表示" }).first().click();
     await expect(page.getByText("コメントを表示しました。")).toBeVisible();
     await expect(superChatOverlayCard).toBeVisible();
+
+    await page.getByRole("button", { name: "操作画面" }).click();
+    const messageList = page.getByTestId("message-list");
+    await page.getByRole("button", { name: "最新へ追従" }).click();
+    await expect
+      .poll(async () => {
+        return messageList.evaluate((element) => element.scrollTop + element.clientHeight >= element.scrollHeight - 8);
+      })
+      .toBe(true);
+
+    for (let index = 0; index < 16; index += 1) {
+      const response = await page.request.post("/api/test-message");
+      const result = (await response.json()) as ApiResponse<TestMessageResult>;
+      expect(result.ok).toBe(true);
+    }
+
+    await page.getByRole("button", { name: "最新へ追従" }).click();
+    await messageList.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    const scrollTopBeforeNewMessage = await messageList.evaluate((element) => element.scrollTop);
+    const response = await page.request.post("/api/test-message");
+    const result = (await response.json()) as ApiResponse<TestMessageResult>;
+    expect(result.ok).toBe(true);
+    await expect(page.getByRole("button", { name: /新着 \d+件/ })).toBeVisible();
+    await expect.poll(() => messageList.evaluate((element) => element.scrollTop)).toBe(scrollTopBeforeNewMessage);
+    await page.getByRole("button", { name: /新着 \d+件/ }).click();
+    await expect
+      .poll(async () => {
+        return messageList.evaluate((element) => element.scrollTop + element.clientHeight >= element.scrollHeight - 8);
+      })
+      .toBe(true);
+
+    await page.setViewportSize({ width: 430, height: 900 });
+    await expect(page.getByText("プレビュー").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "コメントを検索" })).toBeVisible();
 
     await page.request.patch("/api/settings", {
       data: {

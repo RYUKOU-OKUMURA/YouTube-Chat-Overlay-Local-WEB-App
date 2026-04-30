@@ -30,11 +30,37 @@ function youtubeWatchUrl(videoId?: string, broadcastUrl?: string) {
   return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
 }
 
-export function YouTubePreviewPanel({ broadcastStatus }: { broadcastStatus: BroadcastStatus }) {
+export function YouTubePreviewPanel({ broadcastStatus, compactMode = false }: { broadcastStatus: BroadcastStatus; compactMode?: boolean }) {
   const videoId = broadcastStatus.currentVideoId;
   const embedUrl = videoId ? buildYouTubeEmbedUrl(videoId) : null;
   const watchUrl = youtubeWatchUrl(videoId, broadcastStatus.currentBroadcastUrl);
   const canOpenYouTube = Boolean(videoId || broadcastStatus.currentBroadcastUrl);
+
+  if (compactMode) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+        <MonitorPlay className="h-4 w-4 shrink-0 text-slate-500" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-slate-900">プレビュー</span>
+            <Badge tone={connectionTone(broadcastStatus.connectionState)}>{connectionLabel(broadcastStatus.connectionState)}</Badge>
+          </div>
+          <div className="truncate text-xs text-slate-500">
+            {broadcastStatus.streamTitle || broadcastStatus.channelName || (videoId ? `動画ID: ${videoId}` : "配信URLを開始すると表示")}
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<ExternalLink className="h-3.5 w-3.5" />}
+          onClick={() => window.open(watchUrl, "_blank", "noopener,noreferrer")}
+          disabled={!canOpenYouTube}
+        >
+          開く
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <Panel
