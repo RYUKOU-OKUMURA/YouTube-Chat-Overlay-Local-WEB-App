@@ -4,6 +4,7 @@ import {
   YouTubeStreamParserError,
   YouTubeStreamTruncatedError,
   YouTubeStreamResponseShapeError,
+  mapLiveChatMessageDeletion,
   parseLiveChatStreamResponses
 } from "@/server/youtube/api";
 
@@ -107,6 +108,36 @@ describe("YouTube live chat stream parser", () => {
       "Hands doing the sign of the horns with sparkles around"
     );
     expect(sticker?.snippet?.superStickerDetails?.superStickerMetadata?.stickerId).toBe("hands-horns");
+  });
+
+  test("normalizes snake-case deletion and retraction details", async () => {
+    const responses = [];
+
+    for await (const response of parseLiveChatStreamResponses(
+      chunks([
+        '{"items":[{"id":"delete-event-1","snippet":{"type":"messageDeletedEvent","published_at":"2026-04-27T12:05:00.000Z","message_deleted_details":{"deleted_message_id":"message-1"}}},{"id":"retract-event-1","snippet":{"type":"messageRetractedEvent","published_at":"2026-04-27T12:06:00.000Z","message_retracted_details":{"retracted_message_id":"message-2"}}}]}'
+      ])
+    )) {
+      responses.push(response);
+    }
+
+    const deleted = responses[0].items?.[0];
+    const retracted = responses[0].items?.[1];
+    expect(deleted).toBeDefined();
+    expect(retracted).toBeDefined();
+    if (!deleted || !retracted) {
+      throw new Error("Expected deletion and retraction events.");
+    }
+    expect(mapLiveChatMessageDeletion(deleted)).toEqual({
+      targetPlatformMessageId: "message-1",
+      deletionStatus: "deleted",
+      deletedAt: "2026-04-27T12:05:00.000Z"
+    });
+    expect(mapLiveChatMessageDeletion(retracted)).toEqual({
+      targetPlatformMessageId: "message-2",
+      deletionStatus: "retracted",
+      deletedAt: "2026-04-27T12:06:00.000Z"
+    });
   });
 
   test("parses multiple objects from a streaming JSON array", async () => {

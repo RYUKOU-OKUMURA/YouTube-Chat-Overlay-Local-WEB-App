@@ -4,6 +4,7 @@ import {
   getLiveChatInfo,
   getViewerMetrics,
   streamLiveChatMessages,
+  type LiveChatMessageDeletion,
   type ClassifiedYouTubeError
 } from "@/server/youtube/api";
 import { parseYouTubeVideoId } from "@/server/youtube/parseYouTubeUrl";
@@ -31,6 +32,7 @@ import type {
 type AppEvents = {
   "state:sync": [AppState];
   "comment:new": [ChatMessage];
+  "comment:update": [ChatMessage];
   "youtube:status": [YouTubeStatus];
   "broadcast:status": [BroadcastStatus];
   "overlay:show": [OverlayState];
@@ -132,6 +134,12 @@ function viewerMetricsFromValue({
     status: "unavailable",
     message: "視聴者数非表示または取得不可"
   };
+}
+
+function deletionStatusText(status: NonNullable<ChatMessage["deletionStatus"]>) {
+  return status === "retracted"
+    ? "このコメントは投稿者により取り消されました。"
+    : "このコメントは削除されました。";
 }
 
 export class AppController {
@@ -417,6 +425,9 @@ export class AppController {
   async showMessage(messageId: string) {
     await this.init();
     const message = this.findMessage(messageId);
+    if (message.deletionStatus) {
+      throw new Error("削除済みコメントはOBSに表示できません。");
+    }
     this.overlayState = {
       ...this.overlayState,
       currentMessage: { ...message, displayedAt: new Date().toISOString() }
@@ -537,6 +548,7 @@ export class AppController {
         this.nextPageToken = batch.nextPageToken ?? this.nextPageToken;
         this.markStableStreamIfReady(streamStartedAt);
         this.ingestMessages(batch.messages);
+        this.applyMessageDeletions(batch.deletions ?? []);
 
         const now = new Date().toISOString();
         const ended = Boolean(batch.offlineAt);
@@ -682,6 +694,55 @@ export class AppController {
 
     for (const message of freshMessages) {
       this.events.emit("comment:new", message);
+    }
+  }
+
+  private applyMessageDeletions(deletions: LiveChatMessageDeletion[]) {
+    for (const deletion of deletions) {
+      this.applyMessageDeletion(deletion);
+    }
+  }
+
+  private applyMessageDeletion(deletion: LiveChatMessageDeletion) {
+    let updatedMessage: ChatMessage | null = null;
+
+    const updateMessage = (message: ChatMessage) => {
+      if (message.platformMessageId !== deletion.targetPlatformMessageId) {
+        return message;
+      }
+
+      const nextMessage: ChatMessage = {
+        ...message,
+        messageText: deletionStatusText(deletion.deletionStatus),
+        deletionStatus: deletion.deletionStatus,
+        deletedAt: deletion.deletedAt
+      };
+
+      if (
+        message.messageText === nextMessage.messageText &&
+        message.deletionStatus === nextMessage.deletionStatus &&
+        message.deletedAt === nextMessage.deletedAt
+      ) {
+        return message;
+      }
+
+      updatedMessage ??= nextMessage;
+      return nextMessage;
+    };
+
+    this.messages = this.messages.map(updateMessage);
+    this.superChats = this.superChats.map(updateMessage);
+
+    if (this.overlayState.currentMessage?.platformMessageId === deletion.targetPlatformMessageId) {
+      this.overlayState = {
+        ...this.overlayState,
+        currentMessage: null
+      };
+      this.events.emit("overlay:hide", this.overlayState);
+    }
+
+    if (updatedMessage) {
+      this.events.emit("comment:update", updatedMessage);
     }
   }
 

@@ -494,6 +494,118 @@ describe("AppController stream lifecycle", () => {
     await controller.stopBroadcast();
   });
 
+  test("marks deleted super chats and hides the active overlay message", async () => {
+    const gate = deferred();
+    const paidMessage = message("paid-message", {
+      isSuperChat: true,
+      amountText: "¥1,000"
+    });
+    const updates: ChatMessage[] = [];
+    const overlayStates: Array<{ currentMessage: ChatMessage | null }> = [];
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      yield { messages: [paidMessage], deletions: [], nextPageToken: "token-1" };
+      await gate.promise;
+      yield {
+        messages: [],
+        deletions: [
+          {
+            targetPlatformMessageId: "paid-message",
+            deletionStatus: "deleted",
+            deletedAt: "2026-04-27T12:05:00.000Z"
+          }
+        ],
+        nextPageToken: "token-2"
+      };
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    controller.events.on("comment:update", (message) => updates.push(message));
+    controller.events.on("overlay:hide", (overlay) => overlayStates.push(overlay));
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => expect(await controller.getMessages()).toHaveLength(1));
+    await controller.showMessage("paid-message");
+
+    gate.resolve();
+
+    await vi.waitFor(async () => {
+      expect((await controller.getMessages())[0]).toMatchObject({
+        id: "paid-message",
+        messageText: "このコメントは削除されました。",
+        deletionStatus: "deleted",
+        deletedAt: "2026-04-27T12:05:00.000Z"
+      });
+    });
+
+    const state = await controller.getState();
+    expect(state.superChats[0]).toMatchObject({
+      id: "paid-message",
+      messageText: "このコメントは削除されました。",
+      deletionStatus: "deleted"
+    });
+    expect(state.overlay.currentMessage).toBeNull();
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ id: "paid-message", deletionStatus: "deleted" });
+    expect(overlayStates[overlayStates.length - 1]?.currentMessage).toBeNull();
+    await expect(controller.showMessage("paid-message")).rejects.toThrow("削除済みコメントはOBSに表示できません。");
+    await controller.stopBroadcast();
+  });
+
+  test("marks retracted messages and ignores deletion events for unknown targets", async () => {
+    const gate = deferred();
+    const updates: ChatMessage[] = [];
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      yield { messages: [message("kept-message"), message("retracted-message")], deletions: [], nextPageToken: "token-1" };
+      await gate.promise;
+      yield {
+        messages: [],
+        deletions: [
+          {
+            targetPlatformMessageId: "missing-message",
+            deletionStatus: "deleted",
+            deletedAt: "2026-04-27T12:05:00.000Z"
+          },
+          {
+            targetPlatformMessageId: "retracted-message",
+            deletionStatus: "retracted",
+            deletedAt: "2026-04-27T12:06:00.000Z"
+          }
+        ],
+        nextPageToken: "token-2"
+      };
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    controller.events.on("comment:update", (message) => updates.push(message));
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => expect(await controller.getMessages()).toHaveLength(2));
+
+    gate.resolve();
+
+    await vi.waitFor(() =>
+      expect(updates).toEqual([
+        expect.objectContaining({
+          id: "retracted-message",
+          messageText: "このコメントは投稿者により取り消されました。",
+          deletionStatus: "retracted"
+        })
+      ])
+    );
+    const messages = await controller.getMessages();
+    expect(messages.find((item) => item.id === "kept-message")).not.toHaveProperty("deletionStatus");
+    expect(messages.find((item) => item.id === "retracted-message")).toMatchObject({
+      messageText: "このコメントは投稿者により取り消されました。",
+      deletionStatus: "retracted",
+      deletedAt: "2026-04-27T12:06:00.000Z"
+    });
+    await controller.stopBroadcast();
+  });
+
   test("refreshes viewer metrics every three minutes and stops after stop", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-27T12:00:00.000Z"));

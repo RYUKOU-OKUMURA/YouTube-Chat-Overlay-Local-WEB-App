@@ -31,6 +31,8 @@ export type ChatMessage = {
   amountText?: string;
   publishedAt: string;
   displayedAt?: string;
+  deletionStatus?: "deleted" | "retracted";
+  deletedAt?: string;
 };
 
 export type OverlayState = {
@@ -176,6 +178,7 @@ export const socketEvents = {
   stateSync: "state:sync",
   overlaySync: "overlay:sync",
   commentNew: "comment:new",
+  commentUpdate: "comment:update",
   youtubeStatus: "youtube:status",
   broadcastStatus: "broadcast:status",
   overlayConnected: "overlay:connected",

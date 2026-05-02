@@ -16,6 +16,9 @@ function isPaidEvent(message: ChatMessage) {
 }
 
 function formatMessageMeta(message: ChatMessage) {
+  if (message.deletionStatus === "deleted") return "削除済み";
+  if (message.deletionStatus === "retracted") return "投稿者取消";
+
   const tags = [
     message.isOwner ? "配信者" : null,
     message.isModerator ? "モデレーター" : null,
@@ -38,6 +41,12 @@ function formatChatTime(value: string) {
 
 function isImportantMessage(message: ChatMessage) {
   return message.isSuperChat || message.isMember || message.isModerator || message.isOwner;
+}
+
+function deletionLabel(message: ChatMessage) {
+  if (message.deletionStatus === "deleted") return "削除済み";
+  if (message.deletionStatus === "retracted") return "取消済み";
+  return null;
 }
 
 const messagePreviewStyle: CSSProperties = {
@@ -266,7 +275,11 @@ export function MessagePanel({
                 const important = isImportantMessage(message);
                 const paidEventLabel = formatPaidEventLabel(message);
                 const paidEvent = isPaidEvent(message);
-                const rowClassName = paidEvent
+                const deleted = Boolean(message.deletionStatus);
+                const deletedLabel = deletionLabel(message);
+                const rowClassName = deleted
+                  ? "border-slate-300 bg-slate-100 text-slate-500"
+                  : paidEvent
                   ? active
                     ? "border-sky-600 bg-sky-50 ring-1 ring-amber-300"
                     : "border-amber-400 bg-amber-50/90 hover:bg-amber-100/70"
@@ -310,16 +323,27 @@ export function MessagePanel({
                     <div className="min-w-0 flex-1">
                       <button
                         type="button"
-                        onClick={() => onShowMessage(message)}
-                        className="block w-full cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-700 focus-visible:ring-offset-2"
+                        onClick={() => {
+                          if (!deleted) onShowMessage(message);
+                        }}
+                        disabled={deleted}
+                        className={cn(
+                          "block w-full rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-700 focus-visible:ring-offset-2",
+                          deleted ? "cursor-not-allowed" : "cursor-pointer"
+                        )}
                       >
                         <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-slate-500">
-                          <span className="truncate text-sm font-semibold text-slate-900">{message.authorName}</span>
+                          <span className={cn("truncate text-sm font-semibold text-slate-900", deleted && "text-slate-500")}>{message.authorName}</span>
                           <span className="shrink-0">{formatChatTime(message.publishedAt)}</span>
                           <span className="truncate">{formatMessageMeta(message)}</span>
                           {important ? <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label="重要" /> : null}
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {deletedLabel ? (
+                            <Badge tone="slate" className="border-0 bg-slate-200 text-slate-700">
+                              {deletedLabel}
+                            </Badge>
+                          ) : null}
                           {active ? (
                             <Badge tone="blue" className="border-0 bg-sky-100">
                               表示中
@@ -336,7 +360,7 @@ export function MessagePanel({
                             </Badge>
                           ) : null}
                           {paidEvent ? (
-                            <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">
+                            <span className={cn("rounded-full px-2 py-0.5 text-xs font-bold text-white", deleted ? "bg-slate-400" : "bg-amber-500")}>
                               {message.amountText ?? paidEventLabel}
                             </span>
                           ) : null}
@@ -344,6 +368,7 @@ export function MessagePanel({
                         <p
                           className={cn(
                             "mt-1 whitespace-pre-wrap text-[15px] leading-6 text-slate-950",
+                            deleted && "text-slate-500",
                             compactMode && "text-sm leading-5",
                             "max-sm:text-sm max-sm:leading-5"
                           )}
@@ -354,7 +379,7 @@ export function MessagePanel({
                         {!paidEvent && message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
                       </button>
                       <div className="mt-2 flex flex-wrap gap-1.5 opacity-100 transition sm:opacity-70 sm:group-hover:opacity-100">
-                        <IconButton label="コメントをOBSに表示" onClick={() => onShowMessage(message)} disabled={busyAction === `show-${message.id}`}>
+                        <IconButton label="コメントをOBSに表示" onClick={() => onShowMessage(message)} disabled={deleted || busyAction === `show-${message.id}`}>
                           <Play className="h-4 w-4" />
                         </IconButton>
                         <IconButton label="コメントをコピー" onClick={() => onCopyMessage(message)}>

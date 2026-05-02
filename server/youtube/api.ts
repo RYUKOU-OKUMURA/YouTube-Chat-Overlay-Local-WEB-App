@@ -25,8 +25,15 @@ export type ViewerMetricsResult = {
 
 export type LiveChatStreamBatch = {
   messages: ChatMessage[];
+  deletions: LiveChatMessageDeletion[];
   nextPageToken?: string;
   offlineAt?: string;
+};
+
+export type LiveChatMessageDeletion = {
+  targetPlatformMessageId: string;
+  deletionStatus: NonNullable<ChatMessage["deletionStatus"]>;
+  deletedAt: string;
 };
 
 export type StreamLiveChatMessagesInput = {
@@ -308,8 +315,11 @@ export async function* streamLiveChatMessages({
 
   for await (const item of parseLiveChatStreamResponses(response.data)) {
     const normalized = normalizeStreamResponse(item);
+    const { messages, deletions } = mapLiveChatStreamItems(normalized.items ?? []);
+
     yield {
-      messages: (normalized.items ?? []).map(mapLiveChatMessage),
+      messages,
+      deletions,
       nextPageToken: normalized.nextPageToken ?? undefined,
       offlineAt: normalized.offlineAt ?? undefined
     };
@@ -566,6 +576,56 @@ export function mapLiveChatMessage(item: youtube_v3.Schema$LiveChatMessage): Cha
   };
 }
 
+export function mapLiveChatStreamItems(items: youtube_v3.Schema$LiveChatMessage[]) {
+  const messages: ChatMessage[] = [];
+  const deletions: LiveChatMessageDeletion[] = [];
+
+  for (const item of items) {
+    const deletion = mapLiveChatMessageDeletion(item);
+    if (deletion) {
+      deletions.push(deletion);
+      continue;
+    }
+    if (isDeletionEventType(item.snippet?.type)) {
+      continue;
+    }
+    messages.push(mapLiveChatMessage(item));
+  }
+
+  return { messages, deletions };
+}
+
+export function mapLiveChatMessageDeletion(item: youtube_v3.Schema$LiveChatMessage): LiveChatMessageDeletion | null {
+  const snippet = item.snippet;
+  if (snippet?.type === "messageDeletedEvent") {
+    const targetPlatformMessageId = snippet.messageDeletedDetails?.deletedMessageId ?? undefined;
+    return targetPlatformMessageId
+      ? {
+          targetPlatformMessageId,
+          deletionStatus: "deleted",
+          deletedAt: snippet.publishedAt ?? new Date().toISOString()
+        }
+      : null;
+  }
+
+  if (snippet?.type === "messageRetractedEvent") {
+    const targetPlatformMessageId = snippet.messageRetractedDetails?.retractedMessageId ?? undefined;
+    return targetPlatformMessageId
+      ? {
+          targetPlatformMessageId,
+          deletionStatus: "retracted",
+          deletedAt: snippet.publishedAt ?? new Date().toISOString()
+        }
+      : null;
+  }
+
+  return null;
+}
+
+function isDeletionEventType(type: string | null | undefined) {
+  return type === "messageDeletedEvent" || type === "messageRetractedEvent";
+}
+
 function normalizeStreamResponse(value: unknown): youtube_v3.Schema$LiveChatMessageListResponse {
   if (!isRecord(value)) {
     throw new YouTubeStreamResponseShapeError(
@@ -608,6 +668,16 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
     : isRecord(snippet?.super_sticker_details)
       ? snippet?.super_sticker_details
       : undefined;
+  const messageDeleted = isRecord(snippet?.messageDeletedDetails)
+    ? snippet?.messageDeletedDetails
+    : isRecord(snippet?.message_deleted_details)
+      ? snippet?.message_deleted_details
+      : undefined;
+  const messageRetracted = isRecord(snippet?.messageRetractedDetails)
+    ? snippet?.messageRetractedDetails
+    : isRecord(snippet?.message_retracted_details)
+      ? snippet?.message_retracted_details
+      : undefined;
   const superStickerMetadata = isRecord(superSticker?.superStickerMetadata)
     ? superSticker?.superStickerMetadata
     : isRecord(superSticker?.super_sticker_metadata)
@@ -633,6 +703,20 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
           displayMessage: readString(snippet.displayMessage) ?? readString(snippet.display_message) ?? undefined,
           publishedAt: readString(snippet.publishedAt) ?? readString(snippet.published_at) ?? undefined,
           type: readString(snippet.type) ?? undefined,
+          messageDeletedDetails: messageDeleted
+            ? {
+                ...messageDeleted,
+                deletedMessageId:
+                  readString(messageDeleted.deletedMessageId) ?? readString(messageDeleted.deleted_message_id) ?? undefined
+              }
+            : undefined,
+          messageRetractedDetails: messageRetracted
+            ? {
+                ...messageRetracted,
+                retractedMessageId:
+                  readString(messageRetracted.retractedMessageId) ?? readString(messageRetracted.retracted_message_id) ?? undefined
+              }
+            : undefined,
           superChatDetails: superChat
             ? {
                 ...superChat,

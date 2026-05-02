@@ -139,6 +139,25 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
           : prev
       );
     });
+    socket.on(socketEvents.commentUpdate, (message: ChatMessage) => {
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              messages: prev.messages.map((item) =>
+                item.platformMessageId === message.platformMessageId ? message : item
+              ),
+              superChats: prev.superChats.map((item) =>
+                item.platformMessageId === message.platformMessageId ? message : item
+              ),
+              overlay:
+                prev.overlay.currentMessage?.platformMessageId === message.platformMessageId
+                  ? { ...prev.overlay, currentMessage: null }
+                  : prev.overlay
+            }
+          : prev
+      );
+    });
     socket.on(socketEvents.broadcastStatus, (broadcastStatus: BroadcastStatus) => {
       setState((prev) =>
         prev
@@ -410,6 +429,11 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   }
 
   async function showMessage(message: ChatMessage) {
+    if (message.deletionStatus) {
+      setNotice("削除済みコメントはOBSに表示できません。");
+      return;
+    }
+
     setBusyAction(`show-${message.id}`);
     try {
       const next = await fetchJson<AppState["overlay"]>(`/api/messages/${message.id}/show`, { method: "POST" });

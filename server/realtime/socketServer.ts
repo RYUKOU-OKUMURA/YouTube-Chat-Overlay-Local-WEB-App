@@ -120,6 +120,7 @@ export function attachSocketServer(httpServer: HttpServer) {
     io?.to(adminRoom).emit(socketEvents.stateSync, state);
   });
   appController.events.on("comment:new", (message) => io?.to(adminRoom).emit(socketEvents.commentNew, message));
+  appController.events.on("comment:update", (message) => io?.to(adminRoom).emit(socketEvents.commentUpdate, message));
   appController.events.on("youtube:status", (status) => io?.to(adminRoom).emit(socketEvents.youtubeStatus, status));
   appController.events.on("broadcast:status", (status) => io?.to(adminRoom).emit(socketEvents.broadcastStatus, status));
   appController.events.on("overlay:connected", (payload) => io?.to(adminRoom).emit(socketEvents.overlayConnected, payload));

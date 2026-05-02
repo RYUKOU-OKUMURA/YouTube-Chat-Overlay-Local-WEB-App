@@ -245,6 +245,31 @@ describe("socket server role-aware sync", () => {
     expect(await adminSyncPromise).toEqual(currentState);
   });
 
+  test("emits comment updates only to admin clients", async () => {
+    const baseUrl = await startSocketServer();
+    const adminClient = await subscribeAdmin(baseUrl);
+    const overlayClient = await subscribeOverlay(baseUrl);
+
+    let leakedOverlayCommentUpdate: unknown;
+    overlayClient.on(socketEvents.commentUpdate, (payload) => {
+      leakedOverlayCommentUpdate = payload;
+    });
+
+    const updatedMessage: ChatMessage = {
+      ...baseMessage,
+      messageText: "このコメントは削除されました。",
+      deletionStatus: "deleted",
+      deletedAt: "2026-04-27T12:05:00.000Z"
+    };
+
+    const updatePromise = onceSocketEvent<ChatMessage>(adminClient, socketEvents.commentUpdate);
+    appController.events.emit("comment:update", updatedMessage);
+
+    expect(await updatePromise).toEqual(updatedMessage);
+    await delay(30);
+    expect(leakedOverlayCommentUpdate).toBeUndefined();
+  });
+
   test("emits minimal theme updates only to overlay rooms", async () => {
     const baseUrl = await startSocketServer();
     const adminClient = await subscribeAdmin(baseUrl);

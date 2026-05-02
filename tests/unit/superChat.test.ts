@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { getSuperChatTier, parseYenAmount } from "@/lib/superChat";
-import { mapLiveChatMessage } from "@/server/youtube/api";
+import { mapLiveChatMessage, mapLiveChatMessageDeletion, mapLiveChatStreamItems } from "@/server/youtube/api";
 
 describe("Super Chat helpers", () => {
   test.each([
@@ -109,5 +109,77 @@ describe("YouTube live chat mapping", () => {
       isSuperChat: false
     });
     expect(message.publishedAt).toEqual(expect.any(String));
+  });
+
+  test("maps moderator deletion events without adding them as chat messages", () => {
+    const deletedEvent = {
+      id: "delete-event-1",
+      snippet: {
+        type: "messageDeletedEvent",
+        publishedAt: "2026-04-27T12:05:00.000Z",
+        messageDeletedDetails: {
+          deletedMessageId: "live-chat-1"
+        }
+      }
+    };
+
+    expect(mapLiveChatMessageDeletion(deletedEvent)).toEqual({
+      targetPlatformMessageId: "live-chat-1",
+      deletionStatus: "deleted",
+      deletedAt: "2026-04-27T12:05:00.000Z"
+    });
+
+    expect(
+      mapLiveChatStreamItems([
+        {
+          id: "live-chat-2",
+          snippet: {
+            displayMessage: "hello",
+            type: "textMessageEvent",
+            publishedAt: "2026-04-27T12:04:00.000Z"
+          },
+          authorDetails: {
+            displayName: "Viewer"
+          }
+        },
+        deletedEvent
+      ])
+    ).toMatchObject({
+      messages: [{ id: "live-chat-2", messageText: "hello" }],
+      deletions: [{ targetPlatformMessageId: "live-chat-1", deletionStatus: "deleted" }]
+    });
+  });
+
+  test("maps author retraction events", () => {
+    expect(
+      mapLiveChatMessageDeletion({
+        id: "retract-event-1",
+        snippet: {
+          type: "messageRetractedEvent",
+          publishedAt: "2026-04-27T12:06:00.000Z",
+          messageRetractedDetails: {
+            retractedMessageId: "live-chat-2"
+          }
+        }
+      })
+    ).toEqual({
+      targetPlatformMessageId: "live-chat-2",
+      deletionStatus: "retracted",
+      deletedAt: "2026-04-27T12:06:00.000Z"
+    });
+  });
+
+  test("ignores malformed deletion events without adding empty chat messages", () => {
+    expect(
+      mapLiveChatStreamItems([
+        {
+          id: "delete-event-without-target",
+          snippet: {
+            type: "messageDeletedEvent",
+            publishedAt: "2026-04-27T12:07:00.000Z"
+          }
+        }
+      ])
+    ).toEqual({ messages: [], deletions: [] });
   });
 });
