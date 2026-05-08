@@ -227,7 +227,9 @@ function OverlayCard({
     ? "flex items-center gap-4 px-12 pb-5 pt-11"
     : isClinic
       ? "flex items-start gap-4 py-6 pl-28 pr-8"
-      : "flex items-start gap-4 px-6 py-5";
+      : isComic
+        ? "flex items-start gap-4 px-6 pb-8 pt-5"
+        : "flex items-start gap-4 px-6 py-5";
   const messageClassName = `${isMinimal ? "mt-3 pl-8 text-[1.05em] font-black leading-[1.38]" : isComic ? "mt-4 text-[1.05em] font-black leading-[1.42]" : "mt-3 text-[1em] leading-[1.5]"} whitespace-pre-wrap text-left`;
   const messageLineClamp = isMinimal ? 3 : isCompact ? 5 : 7;
   const messageBaseFontSize = theme.fontSize * (isMinimal || isComic ? 1.05 : 1);
@@ -347,7 +349,7 @@ function OverlayCard({
         </div>
       ) : null}
       <div
-        className={contentClassName}
+        className={`${contentClassName} relative z-10`}
         style={{
           maxHeight: isCompact ? "calc(100vh - 48px)" : "calc(100vh - 80px)",
           overflow: "hidden"
@@ -423,7 +425,7 @@ function OverlayCard({
       </div>
       {isComic ? (
         <div
-          className="absolute -bottom-9 left-[55%] h-16 w-16 rotate-45"
+          className="absolute -bottom-9 left-[55%] z-0 h-16 w-16 rotate-45"
           style={{
             background: theme.backgroundColor,
             borderBottom: `5px solid ${theme.accentColor}`,
@@ -544,7 +546,7 @@ function SuperChatCard({
       />
 
       <div
-        className="flex items-center gap-3 px-4 py-3 sm:px-5"
+        className="relative z-10 flex items-center gap-3 px-4 py-3 sm:px-5"
         style={{
           background: tier.colors.header,
           borderRadius: `${radius - 1}px ${radius - 1}px 0 0`,
@@ -585,7 +587,7 @@ function SuperChatCard({
         </div>
       </div>
 
-      <div className="relative px-5 pb-5 pt-4 sm:px-6 sm:pb-6">
+      <div className="relative z-10 px-5 pb-6 pt-4 sm:px-6 sm:pb-7">
         <div
           className="mb-3 inline-flex items-center gap-2 rounded-full px-3 py-1 text-[0.58em] font-black uppercase tracking-wide"
           style={{ background: tier.colors.accentSoft, color: tier.colors.accent }}
@@ -611,7 +613,7 @@ function SuperChatCard({
       </div>
 
       <div
-        className="absolute -bottom-5 left-12 h-10 w-10 rotate-45"
+        className="absolute -bottom-5 left-12 z-0 h-10 w-10 rotate-45"
         style={{
           background: tier.colors.pointer,
           borderBottom: `1px solid ${tier.colors.border}`,

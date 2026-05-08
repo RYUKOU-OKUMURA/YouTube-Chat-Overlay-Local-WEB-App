@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { logger } from "@/lib/logger";
 import type { ChatMessage } from "@/types";
 
 const mocks = vi.hoisted(() => ({
@@ -556,6 +557,7 @@ describe("AppController stream lifecycle", () => {
   test("marks retracted messages and ignores deletion events for unknown targets", async () => {
     const gate = deferred();
     const updates: ChatMessage[] = [];
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
     mocks.streamLiveChatMessages.mockImplementation(async function* () {
       yield { messages: [message("kept-message"), message("retracted-message")], deletions: [], nextPageToken: "token-1" };
       await gate.promise;
@@ -603,6 +605,14 @@ describe("AppController stream lifecycle", () => {
       deletionStatus: "retracted",
       deletedAt: "2026-04-27T12:06:00.000Z"
     });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetPlatformMessageId: "missing-message",
+        deletionStatus: "deleted"
+      }),
+      "YouTube deletion event target was not found in retained chat messages."
+    );
+    warnSpy.mockRestore();
     await controller.stopBroadcast();
   });
 

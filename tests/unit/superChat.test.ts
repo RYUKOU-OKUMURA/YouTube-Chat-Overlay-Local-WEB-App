@@ -111,6 +111,49 @@ describe("YouTube live chat mapping", () => {
     expect(message.publishedAt).toEqual(expect.any(String));
   });
 
+  test("prefers text message details when display message differs from Unicode emoji text", () => {
+    const message = mapLiveChatMessage({
+      id: "emoji-message-1",
+      snippet: {
+        displayMessage: "smiling_face red_heart",
+        textMessageDetails: {
+          messageText: "配信ありがとう 😊😂❤️"
+        },
+        type: "textMessageEvent",
+        publishedAt: "2026-04-27T12:04:00.000Z"
+      },
+      authorDetails: {
+        displayName: "Emoji Viewer"
+      }
+    });
+
+    expect(message.messageText).toBe("配信ありがとう 😊😂❤️");
+  });
+
+  test("prefers Super Chat user comments with Unicode emoji", () => {
+    const message = mapLiveChatMessage({
+      id: "super-chat-emoji-1",
+      snippet: {
+        displayMessage: "red_heart red_heart",
+        type: "superChatEvent",
+        publishedAt: "2026-04-27T12:04:30.000Z",
+        superChatDetails: {
+          amountDisplayString: "¥1,000",
+          userComment: "応援してます ❤️"
+        }
+      },
+      authorDetails: {
+        displayName: "Super Emoji Viewer"
+      }
+    });
+
+    expect(message).toMatchObject({
+      messageText: "応援してます ❤️",
+      isSuperChat: true,
+      amountText: "¥1,000"
+    });
+  });
+
   test("maps moderator deletion events without adding them as chat messages", () => {
     const deletedEvent = {
       id: "delete-event-1",
@@ -166,6 +209,25 @@ describe("YouTube live chat mapping", () => {
       targetPlatformMessageId: "live-chat-2",
       deletionStatus: "retracted",
       deletedAt: "2026-04-27T12:06:00.000Z"
+    });
+  });
+
+  test("maps tombstone events as deleted comments", () => {
+    expect(
+      mapLiveChatMessageDeletion({
+        id: "tombstone-event-1",
+        snippet: {
+          type: "tombstone",
+          publishedAt: "2026-04-27T12:06:30.000Z",
+          tombstoneDetails: {
+            targetMessageId: "live-chat-tombstone-target"
+          }
+        }
+      } as unknown as Parameters<typeof mapLiveChatMessageDeletion>[0])
+    ).toEqual({
+      targetPlatformMessageId: "live-chat-tombstone-target",
+      deletionStatus: "deleted",
+      deletedAt: "2026-04-27T12:06:30.000Z"
     });
   });
 

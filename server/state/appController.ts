@@ -15,6 +15,7 @@ import {
   maxRetainedSuperChats,
   prioritizeRetainedMessages
 } from "@/lib/messageRetention";
+import { logger } from "@/lib/logger";
 import { normalizeTheme } from "@/lib/validation";
 import type {
   AppState,
@@ -743,7 +744,19 @@ export class AppController {
 
     if (updatedMessage) {
       this.events.emit("comment:update", updatedMessage);
+      return;
     }
+
+    logger.warn(
+      {
+        targetPlatformMessageId: deletion.targetPlatformMessageId,
+        deletionStatus: deletion.deletionStatus,
+        deletedAt: deletion.deletedAt,
+        currentVideoId: this.broadcastStatus.currentVideoId,
+        liveChatId: this.broadcastStatus.liveChatId
+      },
+      "YouTube deletion event target was not found in retained chat messages."
+    );
   }
 
   private rememberFetchedMessageId(platformMessageId: string) {

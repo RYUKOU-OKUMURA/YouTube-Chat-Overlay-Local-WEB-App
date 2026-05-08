@@ -556,8 +556,16 @@ export function mapLiveChatMessage(item: youtube_v3.Schema$LiveChatMessage): Cha
   const superChat = snippet?.superChatDetails;
   const superSticker = snippet?.superStickerDetails;
   const paidDetails = superChat ?? superSticker;
+  const textMessage = snippet?.textMessageDetails?.messageText ?? undefined;
+  const superChatUserComment = superChat?.userComment ?? undefined;
   const superStickerAltText = superSticker?.superStickerMetadata?.altText ?? undefined;
-  const displayMessage = snippet?.displayMessage?.trim() ? snippet.displayMessage : (superStickerAltText ?? "");
+  const displayMessage = snippet?.displayMessage ?? undefined;
+  const messageText =
+    snippet?.type === "superChatEvent"
+      ? firstNonBlankString(superChatUserComment, textMessage, displayMessage)
+      : snippet?.type === "superStickerEvent"
+        ? firstNonBlankString(displayMessage, superStickerAltText)
+        : firstNonBlankString(textMessage, displayMessage, superChatUserComment, superStickerAltText);
   const id = item.id ?? crypto.randomUUID();
   return {
     id,
@@ -565,7 +573,7 @@ export function mapLiveChatMessage(item: youtube_v3.Schema$LiveChatMessage): Cha
     authorName: author?.displayName ?? "Unknown",
     authorImageUrl: author?.profileImageUrl ?? undefined,
     authorChannelId: author?.channelId ?? undefined,
-    messageText: displayMessage,
+    messageText: messageText ?? "",
     messageType: snippet?.type ?? "textMessageEvent",
     isMember: Boolean(author?.isChatSponsor),
     isModerator: Boolean(author?.isChatModerator),
@@ -597,8 +605,12 @@ export function mapLiveChatStreamItems(items: youtube_v3.Schema$LiveChatMessage[
 
 export function mapLiveChatMessageDeletion(item: youtube_v3.Schema$LiveChatMessage): LiveChatMessageDeletion | null {
   const snippet = item.snippet;
-  if (snippet?.type === "messageDeletedEvent") {
-    const targetPlatformMessageId = snippet.messageDeletedDetails?.deletedMessageId ?? undefined;
+  if (!snippet) {
+    return null;
+  }
+  const type = snippet?.type;
+  if (type === "messageDeletedEvent" || type === "tombstone") {
+    const targetPlatformMessageId = snippet.messageDeletedDetails?.deletedMessageId ?? tombstoneTargetMessageId(item);
     return targetPlatformMessageId
       ? {
           targetPlatformMessageId,
@@ -608,7 +620,7 @@ export function mapLiveChatMessageDeletion(item: youtube_v3.Schema$LiveChatMessa
       : null;
   }
 
-  if (snippet?.type === "messageRetractedEvent") {
+  if (type === "messageRetractedEvent") {
     const targetPlatformMessageId = snippet.messageRetractedDetails?.retractedMessageId ?? undefined;
     return targetPlatformMessageId
       ? {
@@ -623,7 +635,32 @@ export function mapLiveChatMessageDeletion(item: youtube_v3.Schema$LiveChatMessa
 }
 
 function isDeletionEventType(type: string | null | undefined) {
-  return type === "messageDeletedEvent" || type === "messageRetractedEvent";
+  return type === "messageDeletedEvent" || type === "messageRetractedEvent" || type === "tombstone";
+}
+
+function firstNonBlankString(...values: Array<string | null | undefined>) {
+  return values.find((value) => typeof value === "string" && value.trim().length > 0);
+}
+
+function tombstoneTargetMessageId(item: youtube_v3.Schema$LiveChatMessage) {
+  const snippet = isRecord(item.snippet) ? item.snippet : undefined;
+  const tombstoneDetails = isRecord(snippet?.tombstoneDetails)
+    ? snippet?.tombstoneDetails
+    : isRecord(snippet?.tombstone_details)
+      ? snippet?.tombstone_details
+      : undefined;
+
+  return (
+    readString(tombstoneDetails?.targetMessageId) ??
+    readString(tombstoneDetails?.target_message_id) ??
+    readString(tombstoneDetails?.deletedMessageId) ??
+    readString(tombstoneDetails?.deleted_message_id) ??
+    readString(snippet?.targetMessageId) ??
+    readString(snippet?.target_message_id) ??
+    readString(snippet?.deletedMessageId) ??
+    readString(snippet?.deleted_message_id) ??
+    undefined
+  );
 }
 
 function normalizeStreamResponse(value: unknown): youtube_v3.Schema$LiveChatMessageListResponse {
@@ -678,6 +715,16 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
     : isRecord(snippet?.message_retracted_details)
       ? snippet?.message_retracted_details
       : undefined;
+  const textMessageDetails = isRecord(snippet?.textMessageDetails)
+    ? snippet?.textMessageDetails
+    : isRecord(snippet?.text_message_details)
+      ? snippet?.text_message_details
+      : undefined;
+  const tombstoneDetails = isRecord(snippet?.tombstoneDetails)
+    ? snippet?.tombstoneDetails
+    : isRecord(snippet?.tombstone_details)
+      ? snippet?.tombstone_details
+      : undefined;
   const superStickerMetadata = isRecord(superSticker?.superStickerMetadata)
     ? superSticker?.superStickerMetadata
     : isRecord(superSticker?.super_sticker_metadata)
@@ -703,6 +750,13 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
           displayMessage: readString(snippet.displayMessage) ?? readString(snippet.display_message) ?? undefined,
           publishedAt: readString(snippet.publishedAt) ?? readString(snippet.published_at) ?? undefined,
           type: readString(snippet.type) ?? undefined,
+          textMessageDetails: textMessageDetails
+            ? {
+                ...textMessageDetails,
+                messageText:
+                  readString(textMessageDetails.messageText) ?? readString(textMessageDetails.message_text) ?? undefined
+              }
+            : undefined,
           messageDeletedDetails: messageDeleted
             ? {
                 ...messageDeleted,
@@ -717,11 +771,23 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
                   readString(messageRetracted.retractedMessageId) ?? readString(messageRetracted.retracted_message_id) ?? undefined
               }
             : undefined,
+          tombstoneDetails: tombstoneDetails
+            ? {
+                ...tombstoneDetails,
+                targetMessageId:
+                  readString(tombstoneDetails.targetMessageId) ??
+                  readString(tombstoneDetails.target_message_id) ??
+                  readString(tombstoneDetails.deletedMessageId) ??
+                  readString(tombstoneDetails.deleted_message_id) ??
+                  undefined
+              }
+            : undefined,
           superChatDetails: superChat
             ? {
                 ...superChat,
                 amountDisplayString:
-                  readString(superChat.amountDisplayString) ?? readString(superChat.amount_display_string) ?? undefined
+                  readString(superChat.amountDisplayString) ?? readString(superChat.amount_display_string) ?? undefined,
+                userComment: readString(superChat.userComment) ?? readString(superChat.user_comment) ?? undefined
               }
             : undefined,
           superStickerDetails: superSticker

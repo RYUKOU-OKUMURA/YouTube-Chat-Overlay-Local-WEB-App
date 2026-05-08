@@ -4,6 +4,7 @@ import {
   YouTubeStreamParserError,
   YouTubeStreamTruncatedError,
   YouTubeStreamResponseShapeError,
+  mapLiveChatMessage,
   mapLiveChatMessageDeletion,
   parseLiveChatStreamResponses
 } from "@/server/youtube/api";
@@ -108,6 +109,22 @@ describe("YouTube live chat stream parser", () => {
       "Hands doing the sign of the horns with sparkles around"
     );
     expect(sticker?.snippet?.superStickerDetails?.superStickerMetadata?.stickerId).toBe("hands-horns");
+  });
+
+  test("normalizes snake-case text message details with Unicode emoji", async () => {
+    const responses = [];
+
+    for await (const response of parseLiveChatStreamResponses(
+      chunks([
+        '{"items":[{"id":"emoji-1","snippet":{"type":"textMessageEvent","display_message":"smiling_face red_heart","text_message_details":{"message_text":"最高です 😊❤️"}},"author_details":{"display_name":"Viewer"}}]}'
+      ])
+    )) {
+      responses.push(response);
+    }
+
+    const message = responses[0].items?.[0];
+    expect(message?.snippet?.textMessageDetails?.messageText).toBe("最高です 😊❤️");
+    expect(message ? mapLiveChatMessage(message).messageText : undefined).toBe("最高です 😊❤️");
   });
 
   test("normalizes snake-case deletion and retraction details", async () => {
