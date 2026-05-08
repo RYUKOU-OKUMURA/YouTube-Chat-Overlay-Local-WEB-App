@@ -644,21 +644,11 @@ function firstNonBlankString(...values: Array<string | null | undefined>) {
 
 function tombstoneTargetMessageId(item: youtube_v3.Schema$LiveChatMessage) {
   const snippet = isRecord(item.snippet) ? item.snippet : undefined;
-  const tombstoneDetails = isRecord(snippet?.tombstoneDetails)
-    ? snippet?.tombstoneDetails
-    : isRecord(snippet?.tombstone_details)
-      ? snippet?.tombstone_details
-      : undefined;
+  const tombstoneDetails = readRecordField(snippet, "tombstoneDetails", "tombstone_details");
 
   return (
-    readString(tombstoneDetails?.targetMessageId) ??
-    readString(tombstoneDetails?.target_message_id) ??
-    readString(tombstoneDetails?.deletedMessageId) ??
-    readString(tombstoneDetails?.deleted_message_id) ??
-    readString(snippet?.targetMessageId) ??
-    readString(snippet?.target_message_id) ??
-    readString(snippet?.deletedMessageId) ??
-    readString(snippet?.deleted_message_id) ??
+    readTargetMessageId(tombstoneDetails) ??
+    readTargetMessageId(snippet) ??
     undefined
   );
 }
@@ -689,47 +679,15 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
   if (!isRecord(value)) {
     return {};
   }
-  const snippet = isRecord(value.snippet) ? value.snippet : undefined;
-  const author = isRecord(value.authorDetails)
-    ? value.authorDetails
-    : isRecord(value.author_details)
-      ? value.author_details
-      : undefined;
-  const superChat = isRecord(snippet?.superChatDetails)
-    ? snippet?.superChatDetails
-    : isRecord(snippet?.super_chat_details)
-      ? snippet?.super_chat_details
-      : undefined;
-  const superSticker = isRecord(snippet?.superStickerDetails)
-    ? snippet?.superStickerDetails
-    : isRecord(snippet?.super_sticker_details)
-      ? snippet?.super_sticker_details
-      : undefined;
-  const messageDeleted = isRecord(snippet?.messageDeletedDetails)
-    ? snippet?.messageDeletedDetails
-    : isRecord(snippet?.message_deleted_details)
-      ? snippet?.message_deleted_details
-      : undefined;
-  const messageRetracted = isRecord(snippet?.messageRetractedDetails)
-    ? snippet?.messageRetractedDetails
-    : isRecord(snippet?.message_retracted_details)
-      ? snippet?.message_retracted_details
-      : undefined;
-  const textMessageDetails = isRecord(snippet?.textMessageDetails)
-    ? snippet?.textMessageDetails
-    : isRecord(snippet?.text_message_details)
-      ? snippet?.text_message_details
-      : undefined;
-  const tombstoneDetails = isRecord(snippet?.tombstoneDetails)
-    ? snippet?.tombstoneDetails
-    : isRecord(snippet?.tombstone_details)
-      ? snippet?.tombstone_details
-      : undefined;
-  const superStickerMetadata = isRecord(superSticker?.superStickerMetadata)
-    ? superSticker?.superStickerMetadata
-    : isRecord(superSticker?.super_sticker_metadata)
-      ? superSticker?.super_sticker_metadata
-      : undefined;
+  const snippet = readRecordField(value, "snippet");
+  const author = readRecordField(value, "authorDetails", "author_details");
+  const superChat = readRecordField(snippet, "superChatDetails", "super_chat_details");
+  const superSticker = readRecordField(snippet, "superStickerDetails", "super_sticker_details");
+  const messageDeleted = readRecordField(snippet, "messageDeletedDetails", "message_deleted_details");
+  const messageRetracted = readRecordField(snippet, "messageRetractedDetails", "message_retracted_details");
+  const textMessageDetails = readRecordField(snippet, "textMessageDetails", "text_message_details");
+  const tombstoneDetails = readRecordField(snippet, "tombstoneDetails", "tombstone_details");
+  const superStickerMetadata = readRecordField(superSticker, "superStickerMetadata", "super_sticker_metadata");
 
   return {
     ...value,
@@ -774,12 +732,7 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
           tombstoneDetails: tombstoneDetails
             ? {
                 ...tombstoneDetails,
-                targetMessageId:
-                  readString(tombstoneDetails.targetMessageId) ??
-                  readString(tombstoneDetails.target_message_id) ??
-                  readString(tombstoneDetails.deletedMessageId) ??
-                  readString(tombstoneDetails.deleted_message_id) ??
-                  undefined
+                targetMessageId: readTargetMessageId(tombstoneDetails) ?? undefined
               }
             : undefined,
           superChatDetails: superChat
@@ -1014,6 +967,24 @@ function readString(value: unknown) {
 
 function readBoolean(value: unknown) {
   return typeof value === "boolean" ? value : null;
+}
+
+function readRecordField(source: Record<string, unknown> | undefined, key: string, fallbackKey?: string) {
+  const primary = source?.[key];
+  if (isRecord(primary)) {
+    return primary;
+  }
+  const fallback = fallbackKey ? source?.[fallbackKey] : undefined;
+  return isRecord(fallback) ? fallback : undefined;
+}
+
+function readTargetMessageId(source: Record<string, unknown> | undefined) {
+  return (
+    readString(source?.targetMessageId) ??
+    readString(source?.target_message_id) ??
+    readString(source?.deletedMessageId) ??
+    readString(source?.deleted_message_id)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
