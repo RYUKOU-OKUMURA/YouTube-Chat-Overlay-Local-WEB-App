@@ -142,7 +142,7 @@ export type YouTubeToken = {
 };
 
 export type StartBroadcastInput = {
-  broadcastUrl: string;
+  broadcastUrl?: string;
 };
 
 export type TestMessageInput = {

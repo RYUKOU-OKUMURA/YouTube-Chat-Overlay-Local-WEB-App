@@ -1,9 +1,11 @@
 import { EventEmitter } from "node:events";
 import {
   classifyYouTubeError,
+  getActiveLiveBroadcastInfo,
   getLiveChatInfo,
   getViewerMetrics,
   streamLiveChatMessages,
+  type LiveChatInfo,
   type LiveChatMessageDeletion,
   type ClassifiedYouTubeError
 } from "@/server/youtube/api";
@@ -60,6 +62,7 @@ const maxReconnectDelayMs = 60000;
 const maxReconnectAttempts = 8;
 const maxShortStreamCloses = 5;
 const shortStreamCloseMs = 5000;
+const autoDetectStartKey = "__auto_detect_current_live__";
 
 function clearBroadcastErrorFields(): Partial<BroadcastStatus> {
   return {
@@ -137,6 +140,10 @@ function viewerMetricsFromValue({
   };
 }
 
+function buildYouTubeWatchUrl(videoId: string) {
+  return `https://www.youtube.com/watch?v=${videoId}`;
+}
+
 function deletionStatusText(status: NonNullable<ChatMessage["deletionStatus"]>) {
   return status === "retracted"
     ? "このコメントは投稿者により取り消されました。"
@@ -209,9 +216,14 @@ export class AppController {
     return this.youtubeStatus;
   }
 
-  async startBroadcast(input: StartBroadcastInput) {
+  async startBroadcast(input: StartBroadcastInput = {}) {
     await this.init();
-    const videoId = parseYouTubeVideoId(input.broadcastUrl);
+    const broadcastUrl = input.broadcastUrl?.trim();
+    if (!broadcastUrl) {
+      return this.startDetectedBroadcast();
+    }
+
+    const videoId = parseYouTubeVideoId(broadcastUrl);
     if (!videoId) {
       throw new Error("YouTube videoId could not be extracted from the URL.");
     }
@@ -240,7 +252,7 @@ export class AppController {
         return this.broadcastStatus;
       }
 
-      return this.startBroadcastNow(input, videoId, requestGeneration);
+      return this.startBroadcastNow({ broadcastUrl }, videoId, requestGeneration);
     })();
     this.startQueue = startPromise.catch(() => undefined);
     this.startInFlight = { videoId, generation: requestGeneration, promise: startPromise };
@@ -254,15 +266,81 @@ export class AppController {
     }
   }
 
-  private async startBroadcastNow(input: StartBroadcastInput, videoId: string, requestGeneration: number) {
-    let info: Awaited<ReturnType<typeof getLiveChatInfo>>;
-    try {
-      info = await getLiveChatInfo(videoId);
-    } catch (error) {
-      if (requestGeneration === this.startRequestGeneration && this.canPublishStartFailure(videoId)) {
-        await this.publishStartFailure(input.broadcastUrl, videoId, classifyYouTubeError(error));
+  private async startDetectedBroadcast() {
+    if (this.broadcastStatus.isFetchingComments && this.broadcastStatus.currentVideoId) {
+      return this.broadcastStatus;
+    }
+
+    if (
+      this.startInFlight?.videoId === autoDetectStartKey &&
+      this.startInFlight.generation === this.startRequestGeneration
+    ) {
+      return this.startInFlight.promise;
+    }
+
+    const requestGeneration = ++this.startRequestGeneration;
+    const previousStart = this.startQueue;
+    const startPromise = (async () => {
+      await previousStart.catch(() => undefined);
+
+      if (requestGeneration !== this.startRequestGeneration) {
+        return this.broadcastStatus;
       }
-      throw error;
+      if (this.broadcastStatus.isFetchingComments && this.broadcastStatus.currentVideoId) {
+        return this.broadcastStatus;
+      }
+
+      let info: LiveChatInfo;
+      try {
+        info = await getActiveLiveBroadcastInfo();
+      } catch (error) {
+        if (requestGeneration === this.startRequestGeneration) {
+          await this.publishDetectionFailure(classifyYouTubeError(error));
+        }
+        throw error;
+      }
+      if (requestGeneration !== this.startRequestGeneration) {
+        return this.broadcastStatus;
+      }
+      if (this.isActiveBroadcastFor(info.videoId)) {
+        return this.broadcastStatus;
+      }
+
+      return this.startBroadcastNow(
+        { broadcastUrl: buildYouTubeWatchUrl(info.videoId) },
+        info.videoId,
+        requestGeneration,
+        info
+      );
+    })();
+    this.startQueue = startPromise.catch(() => undefined);
+    this.startInFlight = { videoId: autoDetectStartKey, generation: requestGeneration, promise: startPromise };
+
+    try {
+      return await startPromise;
+    } finally {
+      if (this.startInFlight?.generation === requestGeneration) {
+        this.startInFlight = null;
+      }
+    }
+  }
+
+  private async startBroadcastNow(
+    input: { broadcastUrl: string },
+    videoId: string,
+    requestGeneration: number,
+    liveChatInfo?: LiveChatInfo
+  ) {
+    let info = liveChatInfo;
+    if (!info) {
+      try {
+        info = await getLiveChatInfo(videoId);
+      } catch (error) {
+        if (requestGeneration === this.startRequestGeneration && this.canPublishStartFailure(videoId)) {
+          await this.publishStartFailure(input.broadcastUrl, videoId, classifyYouTubeError(error));
+        }
+        throw error;
+      }
     }
     if (requestGeneration !== this.startRequestGeneration) {
       return this.broadcastStatus;
@@ -520,6 +598,22 @@ export class AppController {
       nextReconnectAt: undefined,
       currentBroadcastUrl: broadcastUrl,
       currentVideoId: videoId,
+      viewerMetrics: idleViewerMetrics(),
+      ...broadcastErrorFields(error, "liveChatInfo")
+    };
+    this.events.emit("broadcast:status", this.broadcastStatus);
+    await this.emitSync();
+  }
+
+  private async publishDetectionFailure(error: ClassifiedYouTubeError) {
+    this.resetActiveStream();
+    this.broadcastStatus = {
+      isFetchingComments: false,
+      connectionMode: "stream",
+      connectionState: terminalConnectionState(error),
+      reconnectAttempt: 0,
+      maxReconnectAttempts,
+      nextReconnectAt: undefined,
       viewerMetrics: idleViewerMetrics(),
       ...broadcastErrorFields(error, "liveChatInfo")
     };

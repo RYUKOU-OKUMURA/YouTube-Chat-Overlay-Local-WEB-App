@@ -29,12 +29,12 @@ type ServerToClientEvents = {
 };
 
 type ClientToServerEvents = {
-  [socketEvents.overlaySubscribe]: (payload: { overlayToken: string }) => void;
+  [socketEvents.overlaySubscribe]: (payload?: { overlayToken?: string }) => void;
   [socketEvents.requestSync]: () => void;
 };
 
 type OverlayClientProps = {
-  overlayToken: string;
+  overlayToken?: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -659,7 +659,7 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
     });
 
     const subscribe = () => {
-      socket.emit(socketEvents.overlaySubscribe, { overlayToken });
+      socket.emit(socketEvents.overlaySubscribe, overlayToken ? { overlayToken } : undefined);
     };
 
     const applyOverlayState = (nextState: OverlayState, nextEvent: OverlayEventName) => {

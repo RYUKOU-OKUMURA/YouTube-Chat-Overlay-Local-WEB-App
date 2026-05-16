@@ -179,6 +179,82 @@ function parseConcurrentViewers(value: youtube_v3.Schema$VideoLiveStreamingDetai
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+export async function getActiveLiveBroadcastInfo(): Promise<LiveChatInfo> {
+  const auth = await getAuthorizedClient();
+  const youtube = google.youtube({ version: "v3", auth });
+  const response = await youtube.liveBroadcasts.list({
+    part: ["id", "snippet", "status"],
+    broadcastStatus: "active",
+    broadcastType: "all",
+    mine: true,
+    maxResults: 5
+  });
+  const items = response.data.items ?? [];
+  if (!items.length) {
+    throw new YouTubeDiagnosticError({
+      kind: "liveChatNotFound",
+      message: "現在配信中のYouTubeライブが見つかりません。",
+      reason: "active_broadcast_not_found",
+      phase: "liveChatInfo",
+      action: "YouTubeで配信を開始してから、もう一度コメント取得を開始してください。",
+      status: 404
+    });
+  }
+
+  const item = items.find((candidate) => candidate.id && candidate.snippet?.liveChatId) ?? items.find((candidate) => candidate.id);
+  if (!item?.id) {
+    throw new YouTubeDiagnosticError({
+      kind: "responseShape",
+      message: "現在配信中のYouTubeライブを検出しましたが、動画IDを取得できませんでした。",
+      reason: "active_broadcast_id_missing",
+      phase: "liveChatInfo",
+      action: "YouTube APIの応答形式を確認してください。",
+      status: 502
+    });
+  }
+
+  const scheduledStartTime = item.snippet?.scheduledStartTime ?? undefined;
+  const actualStartTime = item.snippet?.actualStartTime ?? undefined;
+  const actualEndTime = item.snippet?.actualEndTime ?? undefined;
+  if (actualEndTime) {
+    throw new YouTubeDiagnosticError({
+      kind: "liveEnded",
+      message: "検出したYouTubeライブはすでに終了しています。",
+      reason: "active_broadcast_ended",
+      phase: "liveChatInfo",
+      action: "現在配信中のライブがあるか確認してください。",
+      status: 410,
+      scheduledStartTime,
+      actualStartTime,
+      actualEndTime
+    });
+  }
+
+  const liveChatId = item.snippet?.liveChatId ?? undefined;
+  if (!liveChatId) {
+    throw new YouTubeDiagnosticError({
+      kind: "liveChatDisabled",
+      message: "現在配信中のライブは見つかりましたが、ライブチャットIDを取得できませんでした。",
+      reason: "active_broadcast_live_chat_id_missing",
+      phase: "liveChatInfo",
+      action: "YouTube Studioでライブチャットが有効になっているか確認してください。",
+      status: 409,
+      scheduledStartTime,
+      actualStartTime,
+      actualEndTime
+    });
+  }
+
+  return {
+    videoId: item.id,
+    liveChatId,
+    streamTitle: item.snippet?.title ?? undefined,
+    scheduledStartTime,
+    actualStartTime,
+    actualEndTime
+  };
+}
+
 export async function getLiveChatInfo(videoId: string): Promise<LiveChatInfo> {
   const auth = await getAuthorizedClient();
   const youtube = google.youtube({ version: "v3", auth });

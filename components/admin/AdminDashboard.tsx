@@ -299,7 +299,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
 
   function overlayUrl() {
     if (!state) return "";
-    return new URL(`/overlay/${state.overlayToken}`, window.location.origin).toString();
+    return new URL("/overlay", window.location.origin).toString();
   }
 
   async function patchSettings(patch: SettingsPatch) {
@@ -356,11 +356,13 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
   async function startBroadcast() {
     setBusyAction("broadcast");
     try {
+      const nextBroadcastUrl = broadcastUrl.trim();
       const result = await fetchJson<BroadcastStatus>("/api/broadcast/start", {
         method: "POST",
-        body: JSON.stringify({ broadcastUrl })
+        body: JSON.stringify(nextBroadcastUrl ? { broadcastUrl: nextBroadcastUrl } : {})
       });
-      setState((prev) => (prev ? { ...prev, broadcastStatus: result, lastBroadcastUrl: broadcastUrl } : prev));
+      setBroadcastUrl(result.currentBroadcastUrl ?? nextBroadcastUrl);
+      setState((prev) => (prev ? { ...prev, broadcastStatus: result, lastBroadcastUrl: result.currentBroadcastUrl ?? nextBroadcastUrl } : prev));
       setNotice("コメント取得を開始しました。");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "コメント取得を開始できませんでした。");

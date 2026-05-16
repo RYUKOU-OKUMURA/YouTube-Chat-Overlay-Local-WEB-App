@@ -60,9 +60,9 @@ export function BroadcastPanel({
   const actualEndTime = formatDateTime(broadcastStatus.actualEndTime);
 
   return (
-    <Panel title="配信" subtitle="YouTubeライブURLを登録してコメント取得を開始します。">
+    <Panel title="配信" subtitle="URLを空欄にすると、接続済みチャンネルの現在配信中ライブを自動検出します。">
       <div className="grid gap-3">
-        <Field label="配信URL" hint="YouTube Studioまたは配信ページのライブ動画URLを入力します。">
+        <Field label="配信URL" hint="手動指定したい場合だけ YouTube Studio または配信ページのURLを入力します。">
           <input
             type="url"
             name="broadcastUrl"
@@ -75,8 +75,8 @@ export function BroadcastPanel({
           />
         </Field>
         <div className="flex flex-wrap gap-2">
-          <Button icon={<Play className="h-4 w-4" />} onClick={onStart} disabled={busy || !broadcastUrl.trim()}>
-            開始
+          <Button icon={<Play className="h-4 w-4" />} onClick={onStart} disabled={busy}>
+            {broadcastUrl.trim() ? "URLで開始" : "自動検出して開始"}
           </Button>
           <Button variant="ghost" icon={<Square className="h-4 w-4" />} onClick={onStop} disabled={busy}>
             停止

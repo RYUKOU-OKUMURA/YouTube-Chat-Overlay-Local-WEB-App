@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import type { ChatMessage } from "@/types";
 
 const mocks = vi.hoisted(() => ({
+  getActiveLiveBroadcastInfo: vi.fn(),
   getLiveChatInfo: vi.fn(),
   getViewerMetrics: vi.fn(),
   streamLiveChatMessages: vi.fn(),
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/server/youtube/api", () => ({
+  getActiveLiveBroadcastInfo: mocks.getActiveLiveBroadcastInfo,
   getLiveChatInfo: mocks.getLiveChatInfo,
   getViewerMetrics: mocks.getViewerMetrics,
   streamLiveChatMessages: mocks.streamLiveChatMessages,
@@ -69,6 +71,13 @@ describe("AppController stream lifecycle", () => {
       channelName: "Test channel",
       concurrentViewers: 12
     });
+    mocks.getActiveLiveBroadcastInfo.mockResolvedValue({
+      videoId: "dQw4w9WgXcQ",
+      liveChatId: "live-chat-1",
+      streamTitle: "Test stream",
+      scheduledStartTime: "2026-04-27T11:30:00.000Z",
+      actualStartTime: "2026-04-27T12:00:00.000Z"
+    });
     mocks.getViewerMetrics.mockResolvedValue({
       concurrentViewers: 34,
       checkedAt: "2026-04-27T12:03:00.000Z",
@@ -103,6 +112,32 @@ describe("AppController stream lifecycle", () => {
     expect((await controller.getState()).broadcastStatus).toMatchObject({
       isFetchingComments: false,
       connectionState: "stopped"
+    });
+  });
+
+  test("auto-detects the active live broadcast when no URL is provided", async () => {
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      yield { messages: [message("auto-detected")], nextPageToken: "token-1" };
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    const status = await controller.startBroadcast({});
+
+    expect(mocks.getActiveLiveBroadcastInfo).toHaveBeenCalledTimes(1);
+    expect(mocks.getLiveChatInfo).not.toHaveBeenCalled();
+    expect(mocks.patchSettings).toHaveBeenCalledWith({
+      lastBroadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    });
+    expect(status).toMatchObject({
+      currentBroadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      currentVideoId: "dQw4w9WgXcQ",
+      liveChatId: "live-chat-1",
+      streamTitle: "Test stream"
+    });
+    await vi.waitFor(async () => {
+      expect((await controller.getMessages()).map((item) => item.id)).toContain("auto-detected");
     });
   });
 

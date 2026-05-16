@@ -4,6 +4,7 @@ import {
   YouTubeStreamResponseShapeError,
   YouTubeStreamTruncatedError,
   classifyYouTubeError,
+  getActiveLiveBroadcastInfo,
   getLiveChatInfo,
   getViewerMetrics
 } from "@/server/youtube/api";
@@ -11,6 +12,7 @@ import {
 const mocks = vi.hoisted(() => ({
   getAuthorizedClient: vi.fn(),
   googleYoutube: vi.fn(),
+  liveBroadcastsList: vi.fn(),
   videosList: vi.fn()
 }));
 
@@ -29,6 +31,9 @@ describe("classifyYouTubeError", () => {
     vi.clearAllMocks();
     mocks.getAuthorizedClient.mockResolvedValue({ auth: true });
     mocks.googleYoutube.mockReturnValue({
+      liveBroadcasts: {
+        list: mocks.liveBroadcastsList
+      },
       videos: {
         list: mocks.videosList
       }
@@ -150,6 +155,9 @@ describe("getLiveChatInfo diagnosis", () => {
     vi.clearAllMocks();
     mocks.getAuthorizedClient.mockResolvedValue({ auth: true });
     mocks.googleYoutube.mockReturnValue({
+      liveBroadcasts: {
+        list: mocks.liveBroadcastsList
+      },
       videos: {
         list: mocks.videosList
       }
@@ -280,6 +288,50 @@ describe("getLiveChatInfo diagnosis", () => {
       channelName: "Test channel",
       scheduledStartTime: "2026-04-28T10:30:00.000Z",
       actualStartTime: "2026-04-28T11:00:00.000Z"
+    });
+  });
+
+  test("auto-detects current active live broadcasts without a video lookup", async () => {
+    mocks.liveBroadcastsList.mockResolvedValue({
+      data: {
+        items: [
+          {
+            id: "auto-video",
+            snippet: {
+              title: "Auto live",
+              liveChatId: "auto-chat",
+              scheduledStartTime: "2026-04-28T10:30:00.000Z",
+              actualStartTime: "2026-04-28T11:00:00.000Z"
+            }
+          }
+        ]
+      }
+    });
+
+    await expect(getActiveLiveBroadcastInfo()).resolves.toMatchObject({
+      videoId: "auto-video",
+      liveChatId: "auto-chat",
+      streamTitle: "Auto live",
+      scheduledStartTime: "2026-04-28T10:30:00.000Z",
+      actualStartTime: "2026-04-28T11:00:00.000Z"
+    });
+    expect(mocks.liveBroadcastsList).toHaveBeenCalledWith({
+      part: ["id", "snippet", "status"],
+      broadcastStatus: "active",
+      broadcastType: "all",
+      mine: true,
+      maxResults: 5
+    });
+    expect(mocks.videosList).not.toHaveBeenCalled();
+  });
+
+  test("diagnoses missing active broadcasts for auto-detect", async () => {
+    mocks.liveBroadcastsList.mockResolvedValue({ data: { items: [] } });
+
+    await expect(getActiveLiveBroadcastInfo()).rejects.toMatchObject({
+      kind: "liveChatNotFound",
+      reason: "active_broadcast_not_found",
+      phase: "liveChatInfo"
     });
   });
 

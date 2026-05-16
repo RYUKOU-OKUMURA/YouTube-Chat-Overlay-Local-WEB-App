@@ -36,7 +36,7 @@ test.describe("admin/overlay smoke", () => {
     await page.getByRole("button", { name: "通常表示に戻す" }).click();
 
     const overlayPage = await context.newPage();
-    await overlayPage.goto(`/overlay/${settings.data.overlayToken}`);
+    await overlayPage.goto("/overlay");
 
     const overlayMessage = overlayPage.getByText("OBSオーバーレイ表示確認用のテストコメントです。");
 

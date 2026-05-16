@@ -60,6 +60,19 @@ describe("broadcast start route", () => {
     });
   });
 
+  test("allows an empty object body for active broadcast auto-detect", async () => {
+    mocks.startBroadcast.mockResolvedValue({ isFetchingComments: true });
+
+    const response = await postStart({});
+
+    expect(response.status).toBe(200);
+    expect(mocks.startBroadcast).toHaveBeenCalledWith({});
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      data: { isFetchingComments: true }
+    });
+  });
+
   test("maps permission diagnosis to YOUTUBE_PERMISSION_DENIED", async () => {
     mocks.startBroadcast.mockRejectedValue(
       new YouTubeDiagnosticError({

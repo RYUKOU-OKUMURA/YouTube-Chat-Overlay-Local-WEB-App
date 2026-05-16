@@ -40,7 +40,7 @@ export const settingsSchema = z.object({
 });
 
 export const startBroadcastSchema = z.object({
-  broadcastUrl: z.string().min(8)
+  broadcastUrl: z.string().trim().min(8).optional()
 });
 
 export const patchSettingsSchema = z.object({

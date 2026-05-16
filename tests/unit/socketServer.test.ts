@@ -193,6 +193,19 @@ describe("socket server role-aware sync", () => {
     expect(appController.setOverlayConnected).toHaveBeenCalledWith(true);
   });
 
+  test("lets fixed /overlay clients subscribe without exposing the token in the URL", async () => {
+    const baseUrl = await startSocketServer();
+    const overlayClient = connectClient(baseUrl);
+    await waitForConnect(overlayClient);
+
+    const syncPromise = onceSocketEvent<OverlayState>(overlayClient, socketEvents.overlaySync);
+    overlayClient.emit(socketEvents.overlaySubscribe);
+    const syncPayload = await syncPromise;
+
+    expect(syncPayload).toEqual(currentState.overlay);
+    expect(appController.setOverlayConnected).toHaveBeenCalledWith(true);
+  });
+
   test("routes state:sync as full admin sync without pushing redundant overlay sync", async () => {
     const baseUrl = await startSocketServer();
     const adminClient = await subscribeAdmin(baseUrl);

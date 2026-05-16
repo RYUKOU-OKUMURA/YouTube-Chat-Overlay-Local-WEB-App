@@ -62,12 +62,8 @@ export function attachSocketServer(httpServer: HttpServer) {
     });
 
     socket.on(socketEvents.overlaySubscribe, async (payload?: { overlayToken?: string }) => {
-      const overlayToken = payload?.overlayToken;
       const state = await appController.getState();
-      if (!overlayToken) {
-        socket.disconnect(true);
-        return;
-      }
+      const overlayToken = payload?.overlayToken ?? state.overlayToken;
       if (overlayToken !== state.overlayToken) {
         socket.disconnect(true);
         return;

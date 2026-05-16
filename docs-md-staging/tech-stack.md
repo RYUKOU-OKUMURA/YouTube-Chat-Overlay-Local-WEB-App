@@ -11,7 +11,7 @@
 
 個人利用を前提とし、DB、本格ログイン、SaaS 設計は採用しない。コメント履歴は保存せず、配信中のコメントはアプリ起動中だけメモリ上に保持する。
 
-OBS には `/overlay/{overlayToken}` の URL を Browser Source として登録する。
+OBS には固定 URL `/overlay` を Browser Source として登録する。
 
 ## 2. ランタイムと主要ライブラリ
 
@@ -65,7 +65,7 @@ In-memory state
   v
 YouTube Data API / liveChat.messages.stream
 
-OBS Browser Source /overlay/{overlayToken}
+OBS Browser Source /overlay
   |
   | Socket.IO
   v
@@ -224,7 +224,7 @@ data/
 
 - `html` と `body` を transparent background にする
 - Socket.IO 接続後に `overlay:subscribe` する
-- token 不一致時はサーバー側で切断される
+- 固定 `/overlay` は token なしで購読し、互換用 `/overlay/{overlayToken}` は token 不一致時にサーバー側で切断される
 - `overlay:sync`、`overlay:show`、`overlay:hide`、`overlay:test`、`overlay:theme:update` を受ける
 - `overlay:sync` は `OverlayState` のみを受け、管理画面用の messages や YouTube/broadcast status は受けない
 - `AnimatePresence` で表示/非表示を制御する
@@ -561,7 +561,7 @@ npm run build
 npm run test:e2e
 ```
 
-E2E は `/admin` と `/overlay/{overlayToken}` を開き、テストコメント、非表示、再表示、テストスパチャを確認する。
+E2E は `/admin` と `/overlay` を開き、テストコメント、非表示、再表示、テストスパチャを確認する。
 
 2026-04-28 時点の確認:
 
