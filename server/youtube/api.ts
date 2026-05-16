@@ -31,11 +31,16 @@ export type LiveChatStreamBatch = {
   offlineAt?: string;
 };
 
-export type LiveChatMessageDeletion = {
-  targetPlatformMessageId: string;
+type LiveChatMessageDeletionBase = {
   deletionStatus: NonNullable<ChatMessage["deletionStatus"]>;
   deletedAt: string;
 };
+
+export type LiveChatMessageDeletion = LiveChatMessageDeletionBase &
+  (
+    | { targetPlatformMessageId: string; targetAuthorChannelId?: never }
+    | { targetPlatformMessageId?: never; targetAuthorChannelId: string }
+  );
 
 export type StreamLiveChatMessagesInput = {
   liveChatId: string;
@@ -844,7 +849,10 @@ export function mapLiveChatMessageDeletion(item: youtube_v3.Schema$LiveChatMessa
   }
   const type = snippet?.type;
   if (type === "messageDeletedEvent" || type === "tombstone") {
-    const targetPlatformMessageId = snippet.messageDeletedDetails?.deletedMessageId ?? tombstoneTargetMessageId(item);
+    const targetPlatformMessageId =
+      type === "tombstone"
+        ? snippet.messageDeletedDetails?.deletedMessageId ?? tombstoneTargetMessageId(item)
+        : snippet.messageDeletedDetails?.deletedMessageId;
     return targetPlatformMessageId
       ? {
           targetPlatformMessageId,
@@ -865,11 +873,22 @@ export function mapLiveChatMessageDeletion(item: youtube_v3.Schema$LiveChatMessa
       : null;
   }
 
+  if (type === "userBannedEvent") {
+    const targetAuthorChannelId = bannedAuthorChannelId(item);
+    return targetAuthorChannelId
+      ? {
+          targetAuthorChannelId,
+          deletionStatus: "deleted",
+          deletedAt: snippet.publishedAt ?? new Date().toISOString()
+        }
+      : null;
+  }
+
   return null;
 }
 
 function isDeletionEventType(type: string | null | undefined) {
-  return type === "messageDeletedEvent" || type === "messageRetractedEvent" || type === "tombstone";
+  return type === "messageDeletedEvent" || type === "messageRetractedEvent" || type === "tombstone" || type === "userBannedEvent";
 }
 
 function firstNonBlankString(...values: Array<string | null | undefined>) {
@@ -883,6 +902,19 @@ function tombstoneTargetMessageId(item: youtube_v3.Schema$LiveChatMessage) {
   return (
     readTargetMessageId(tombstoneDetails) ??
     readTargetMessageId(snippet) ??
+    readString(item.id) ??
+    undefined
+  );
+}
+
+function bannedAuthorChannelId(item: youtube_v3.Schema$LiveChatMessage) {
+  const snippet = isRecord(item.snippet) ? item.snippet : undefined;
+  const userBannedDetails = readRecordField(snippet, "userBannedDetails", "user_banned_details");
+  const bannedUserDetails = readRecordField(userBannedDetails, "bannedUserDetails", "banned_user_details");
+
+  return (
+    readString(bannedUserDetails?.channelId) ??
+    readString(bannedUserDetails?.channel_id) ??
     undefined
   );
 }
@@ -921,6 +953,8 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
   const messageRetracted = readRecordField(snippet, "messageRetractedDetails", "message_retracted_details");
   const textMessageDetails = readRecordField(snippet, "textMessageDetails", "text_message_details");
   const tombstoneDetails = readRecordField(snippet, "tombstoneDetails", "tombstone_details");
+  const userBannedDetails = readRecordField(snippet, "userBannedDetails", "user_banned_details");
+  const bannedUserDetails = readRecordField(userBannedDetails, "bannedUserDetails", "banned_user_details");
   const superStickerMetadata = readRecordField(superSticker, "superStickerMetadata", "super_sticker_metadata");
 
   return {
@@ -967,6 +1001,31 @@ function normalizeStreamMessage(value: unknown): youtube_v3.Schema$LiveChatMessa
             ? {
                 ...tombstoneDetails,
                 targetMessageId: readTargetMessageId(tombstoneDetails) ?? undefined
+              }
+            : undefined,
+          userBannedDetails: userBannedDetails
+            ? {
+                ...userBannedDetails,
+                banType: readString(userBannedDetails.banType) ?? readString(userBannedDetails.ban_type) ?? undefined,
+                banDurationSeconds:
+                  readString(userBannedDetails.banDurationSeconds) ??
+                  readString(userBannedDetails.ban_duration_seconds) ??
+                  undefined,
+                bannedUserDetails: bannedUserDetails
+                  ? {
+                      ...bannedUserDetails,
+                      channelId:
+                        readString(bannedUserDetails.channelId) ?? readString(bannedUserDetails.channel_id) ?? undefined,
+                      displayName:
+                        readString(bannedUserDetails.displayName) ?? readString(bannedUserDetails.display_name) ?? undefined,
+                      profileImageUrl:
+                        readString(bannedUserDetails.profileImageUrl) ??
+                        readString(bannedUserDetails.profile_image_url) ??
+                        undefined,
+                      channelUrl:
+                        readString(bannedUserDetails.channelUrl) ?? readString(bannedUserDetails.channel_url) ?? undefined
+                    }
+                  : undefined
               }
             : undefined,
           superChatDetails: superChat

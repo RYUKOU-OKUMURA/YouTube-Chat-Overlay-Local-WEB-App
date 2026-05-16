@@ -368,7 +368,7 @@ export function MessagePanel({
                         <p
                           className={cn(
                             "mt-1 whitespace-pre-wrap text-[15px] leading-6 text-slate-950",
-                            deleted && "text-slate-500",
+                            deleted && "text-slate-500 line-through decoration-slate-500 decoration-2",
                             compactMode && "text-sm leading-5",
                             "max-sm:text-sm max-sm:leading-5"
                           )}

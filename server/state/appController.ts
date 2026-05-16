@@ -799,10 +799,10 @@ export class AppController {
   }
 
   private applyMessageDeletion(deletion: LiveChatMessageDeletion) {
-    let updatedMessage: ChatMessage | null = null;
+    const updatedMessages = new Map<string, ChatMessage>();
 
     const updateMessage = (message: ChatMessage) => {
-      if (message.platformMessageId !== deletion.targetPlatformMessageId) {
+      if (!this.deletionMatchesMessage(deletion, message)) {
         return message;
       }
 
@@ -821,14 +821,14 @@ export class AppController {
         return message;
       }
 
-      updatedMessage ??= nextMessage;
+      updatedMessages.set(nextMessage.platformMessageId, nextMessage);
       return nextMessage;
     };
 
     this.messages = this.messages.map(updateMessage);
     this.superChats = this.superChats.map(updateMessage);
 
-    if (this.overlayState.currentMessage?.platformMessageId === deletion.targetPlatformMessageId) {
+    if (this.overlayState.currentMessage && this.deletionMatchesMessage(deletion, this.overlayState.currentMessage)) {
       this.overlayState = {
         ...this.overlayState,
         currentMessage: null
@@ -836,20 +836,30 @@ export class AppController {
       this.events.emit("overlay:hide", this.overlayState);
     }
 
-    if (updatedMessage) {
-      this.events.emit("comment:update", updatedMessage);
+    if (updatedMessages.size > 0) {
+      for (const updatedMessage of updatedMessages.values()) {
+        this.events.emit("comment:update", updatedMessage);
+      }
       return;
     }
 
     logger.warn(
       {
         targetPlatformMessageId: deletion.targetPlatformMessageId,
+        targetAuthorChannelId: deletion.targetAuthorChannelId,
         deletionStatus: deletion.deletionStatus,
         deletedAt: deletion.deletedAt,
         currentVideoId: this.broadcastStatus.currentVideoId,
         liveChatId: this.broadcastStatus.liveChatId
       },
       "YouTube deletion event target was not found in retained chat messages."
+    );
+  }
+
+  private deletionMatchesMessage(deletion: LiveChatMessageDeletion, message: ChatMessage) {
+    return Boolean(
+      (deletion.targetPlatformMessageId && message.platformMessageId === deletion.targetPlatformMessageId) ||
+        (deletion.targetAuthorChannelId && message.authorChannelId === deletion.targetAuthorChannelId)
     );
   }
 

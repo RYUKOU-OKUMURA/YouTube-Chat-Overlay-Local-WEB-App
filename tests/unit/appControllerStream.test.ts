@@ -651,6 +651,63 @@ describe("AppController stream lifecycle", () => {
     await controller.stopBroadcast();
   });
 
+  test("marks retained messages from a banned author as deleted", async () => {
+    const gate = deferred();
+    const updates: ChatMessage[] = [];
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      yield {
+        messages: [
+          message("banned-message-1", { authorChannelId: "banned-channel-1" }),
+          message("banned-message-2", { authorChannelId: "banned-channel-1" }),
+          message("other-message", { authorChannelId: "other-channel-1" })
+        ],
+        deletions: [],
+        nextPageToken: "token-1"
+      };
+      await gate.promise;
+      yield {
+        messages: [],
+        deletions: [
+          {
+            targetAuthorChannelId: "banned-channel-1",
+            deletionStatus: "deleted",
+            deletedAt: "2026-04-27T12:08:00.000Z"
+          }
+        ],
+        nextPageToken: "token-2"
+      };
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    controller.events.on("comment:update", (message) => updates.push(message));
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => expect(await controller.getMessages()).toHaveLength(3));
+    await controller.showMessage("banned-message-1");
+
+    gate.resolve();
+
+    await vi.waitFor(async () => {
+      const messages = await controller.getMessages();
+      expect(messages.find((item) => item.id === "banned-message-1")).toMatchObject({
+        messageText: "このコメントは削除されました。",
+        deletionStatus: "deleted",
+        deletedAt: "2026-04-27T12:08:00.000Z"
+      });
+      expect(messages.find((item) => item.id === "banned-message-2")).toMatchObject({
+        messageText: "このコメントは削除されました。",
+        deletionStatus: "deleted"
+      });
+      expect(messages.find((item) => item.id === "other-message")).not.toHaveProperty("deletionStatus");
+    });
+
+    expect((await controller.getState()).overlay.currentMessage).toBeNull();
+    expect(updates.map((item) => item.id).sort()).toEqual(["banned-message-1", "banned-message-2"]);
+    await controller.stopBroadcast();
+  });
+
   test("refreshes viewer metrics every three minutes and stops after stop", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-27T12:00:00.000Z"));

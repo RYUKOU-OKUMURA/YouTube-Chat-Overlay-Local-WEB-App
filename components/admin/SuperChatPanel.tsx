@@ -69,7 +69,13 @@ export function SuperChatPanel({
                     {active ? <Badge tone="amber" className="border-0 bg-amber-100">表示中</Badge> : null}
                     {message.displayedAt ? <Badge tone="blue" className="border-0 bg-sky-100">表示済み</Badge> : null}
                   </div>
-                  <p className={`whitespace-pre-wrap break-words text-sm leading-5 ${deleted ? "text-slate-500" : "text-slate-900"}`}>{message.messageText}</p>
+                  <p
+                    className={`whitespace-pre-wrap break-words text-sm leading-5 ${
+                      deleted ? "text-slate-500 line-through decoration-slate-500 decoration-2" : "text-slate-900"
+                    }`}
+                  >
+                    {message.messageText}
+                  </p>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       size="sm"

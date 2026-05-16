@@ -231,6 +231,54 @@ describe("YouTube live chat mapping", () => {
     });
   });
 
+  test("uses the tombstone message id when YouTube omits target details", () => {
+    expect(
+      mapLiveChatMessageDeletion({
+        id: "live-chat-tombstone-target",
+        snippet: {
+          type: "tombstone",
+          publishedAt: "2026-04-27T12:06:30.000Z"
+        }
+      })
+    ).toEqual({
+      targetPlatformMessageId: "live-chat-tombstone-target",
+      deletionStatus: "deleted",
+      deletedAt: "2026-04-27T12:06:30.000Z"
+    });
+  });
+
+  test("maps user ban events to author-level deletions without adding moderation events as chat messages", () => {
+    const bannedEvent = {
+      id: "ban-event-1",
+      snippet: {
+        type: "userBannedEvent",
+        publishedAt: "2026-04-27T12:08:00.000Z",
+        userBannedDetails: {
+          bannedUserDetails: {
+            channelId: "banned-channel-1"
+          },
+          banType: "permanent"
+        }
+      }
+    };
+
+    expect(mapLiveChatMessageDeletion(bannedEvent)).toEqual({
+      targetAuthorChannelId: "banned-channel-1",
+      deletionStatus: "deleted",
+      deletedAt: "2026-04-27T12:08:00.000Z"
+    });
+    expect(mapLiveChatStreamItems([bannedEvent])).toEqual({
+      messages: [],
+      deletions: [
+        {
+          targetAuthorChannelId: "banned-channel-1",
+          deletionStatus: "deleted",
+          deletedAt: "2026-04-27T12:08:00.000Z"
+        }
+      ]
+    });
+  });
+
   test("ignores malformed deletion events without adding empty chat messages", () => {
     expect(
       mapLiveChatStreamItems([

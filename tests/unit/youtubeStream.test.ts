@@ -189,6 +189,29 @@ describe("YouTube live chat stream parser", () => {
     });
   });
 
+  test("normalizes snake-case user ban events as author deletions", async () => {
+    const responses = [];
+
+    for await (const response of parseLiveChatStreamResponses(
+      chunks([
+        '{"items":[{"id":"ban-event-1","snippet":{"type":"userBannedEvent","published_at":"2026-04-27T12:08:00.000Z","user_banned_details":{"banned_user_details":{"channel_id":"banned-channel-1"},"ban_type":"temporary"}}}]}'
+      ])
+    )) {
+      responses.push(response);
+    }
+
+    const banned = responses[0].items?.[0];
+    expect(banned).toBeDefined();
+    if (!banned) {
+      throw new Error("Expected user ban event.");
+    }
+    expect(mapLiveChatMessageDeletion(banned)).toEqual({
+      targetAuthorChannelId: "banned-channel-1",
+      deletionStatus: "deleted",
+      deletedAt: "2026-04-27T12:08:00.000Z"
+    });
+  });
+
   test("parses multiple objects from a streaming JSON array", async () => {
     const responses = [];
 
