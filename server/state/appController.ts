@@ -4,6 +4,7 @@ import {
   getActiveLiveBroadcastInfo,
   getLiveChatInfo,
   getViewerMetrics,
+  listLiveChatDeletionEvents,
   streamLiveChatMessages,
   type LiveChatInfo,
   type LiveChatMessageDeletion,
@@ -18,6 +19,7 @@ import {
   prioritizeRetainedMessages
 } from "@/lib/messageRetention";
 import { logger } from "@/lib/logger";
+import { isYoutubeSystemDeletedMessage, isYoutubeSystemRetractedMessage } from "@/lib/youtubeSystemMessages";
 import { normalizeTheme } from "@/lib/validation";
 import type {
   AppState,
@@ -62,6 +64,7 @@ const maxReconnectDelayMs = 60000;
 const maxReconnectAttempts = 8;
 const maxShortStreamCloses = 5;
 const shortStreamCloseMs = 5000;
+const deletionReconcileIntervalMs = 5000;
 const autoDetectStartKey = "__auto_detect_current_live__";
 
 function clearBroadcastErrorFields(): Partial<BroadcastStatus> {
@@ -159,10 +162,13 @@ export class AppController {
   private superChats: ChatMessage[] = [];
   private fetchedMessageIds = new Set<string>();
   private fetchedMessageIdQueue: string[] = [];
+  private pendingMessageDeletions = new Map<string, LiveChatMessageDeletion>();
   private nextPageToken: string | undefined;
   private streamAbortController: AbortController | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private viewerMetricsTimer: NodeJS.Timeout | null = null;
+  private deletionReconcileTimer: NodeJS.Timeout | null = null;
+  private deletionReconcileInFlight = false;
   private viewerMetricsRefreshInFlight: Promise<BroadcastStatus> | null = null;
   private streamGeneration = 0;
   private startRequestGeneration = 0;
@@ -357,6 +363,7 @@ export class AppController {
     this.shortStreamCloseCount = 0;
     this.fetchedMessageIds.clear();
     this.fetchedMessageIdQueue = [];
+    this.pendingMessageDeletions.clear();
     this.messages = [];
     this.superChats = [];
     this.settings = nextSettings;
@@ -386,6 +393,7 @@ export class AppController {
     this.events.emit("broadcast:status", this.broadcastStatus);
     await this.emitSync();
     this.scheduleViewerMetricsRefresh(generation);
+    this.scheduleDeletionReconcile(info.liveChatId, generation);
     void this.consumeLiveChatStream(generation);
     return this.broadcastStatus;
   }
@@ -644,6 +652,9 @@ export class AppController {
         this.markStableStreamIfReady(streamStartedAt);
         this.ingestMessages(batch.messages);
         this.applyMessageDeletions(batch.deletions ?? []);
+        if (this.pendingMessageDeletions.size > 0) {
+          void this.reconcileDeletionsFromList(liveChatId, generation, "pending-after-batch");
+        }
 
         const now = new Date().toISOString();
         const ended = Boolean(batch.offlineAt);
@@ -665,6 +676,7 @@ export class AppController {
         if (ended) {
           this.clearCurrentAbortController(abortController);
           this.clearViewerMetricsTimer();
+          this.clearDeletionReconcileTimer();
           this.broadcastStatus = {
             ...this.broadcastStatus,
             viewerMetrics: this.broadcastStatus.viewerMetrics
@@ -762,16 +774,66 @@ export class AppController {
     }, delay);
   }
 
+  private ingestAuthorRetractionPlaceholder(message: ChatMessage) {
+    if (!isYoutubeSystemRetractedMessage(message.messageText) || !message.authorChannelId) {
+      return false;
+    }
+
+    if (!this.rememberFetchedMessageId(message.platformMessageId)) {
+      this.applyPendingMessageDeletionFor(message.platformMessageId);
+      return true;
+    }
+
+    const targetPlatformMessageId = this.findAuthorRetractionTarget(
+      message.authorChannelId,
+      message.publishedAt
+    );
+    if (!targetPlatformMessageId) {
+      this.queuePendingMessageDeletion({
+        targetAuthorChannelId: message.authorChannelId,
+        authorRetractionAnchor: message.publishedAt,
+        deletionStatus: "retracted",
+        deletedAt: message.publishedAt
+      });
+      return true;
+    }
+
+    this.applyMessageDeletion({
+      targetPlatformMessageId,
+      deletionStatus: "retracted",
+      deletedAt: message.publishedAt
+    });
+    return true;
+  }
+
   private ingestMessages(messages: ChatMessage[]) {
     const freshMessages: ChatMessage[] = [];
 
     for (const message of messages) {
+      if (this.ingestAuthorRetractionPlaceholder(message)) {
+        continue;
+      }
+
       if (this.rememberFetchedMessageId(message.platformMessageId)) {
         freshMessages.push(message);
+      } else {
+        const existing = this.findStoredMessage(message.platformMessageId);
+        if (existing && !existing.deletionStatus) {
+          const duplicateRemovalStatus = this.duplicateRemovalStatus(message, existing);
+          if (duplicateRemovalStatus) {
+            this.applyMessageDeletion({
+              targetPlatformMessageId: message.platformMessageId,
+              deletionStatus: duplicateRemovalStatus,
+              deletedAt: message.publishedAt ?? new Date().toISOString()
+            });
+          }
+        }
+        this.applyPendingMessageDeletionFor(message.platformMessageId);
       }
     }
 
     if (!freshMessages.length) {
+      this.replayResolvablePendingDeletions();
       return;
     }
 
@@ -788,8 +850,12 @@ export class AppController {
     }
 
     for (const message of freshMessages) {
-      this.events.emit("comment:new", message);
+      this.applyPendingMessageDeletionFor(message.platformMessageId);
+      const stored = this.findStoredMessage(message.platformMessageId) ?? message;
+      this.events.emit("comment:new", stored);
     }
+
+    this.replayResolvablePendingDeletions();
   }
 
   private applyMessageDeletions(deletions: LiveChatMessageDeletion[]) {
@@ -799,18 +865,19 @@ export class AppController {
   }
 
   private applyMessageDeletion(deletion: LiveChatMessageDeletion) {
+    const resolvedDeletion = this.resolveDeletionTarget(deletion);
     const updatedMessages = new Map<string, ChatMessage>();
 
     const updateMessage = (message: ChatMessage) => {
-      if (!this.deletionMatchesMessage(deletion, message)) {
+      if (!this.deletionMatchesMessage(resolvedDeletion, message)) {
         return message;
       }
 
       const nextMessage: ChatMessage = {
         ...message,
-        messageText: deletionStatusText(deletion.deletionStatus),
-        deletionStatus: deletion.deletionStatus,
-        deletedAt: deletion.deletedAt
+        messageText: deletionStatusText(resolvedDeletion.deletionStatus),
+        deletionStatus: resolvedDeletion.deletionStatus,
+        deletedAt: resolvedDeletion.deletedAt
       };
 
       if (
@@ -828,7 +895,10 @@ export class AppController {
     this.messages = this.messages.map(updateMessage);
     this.superChats = this.superChats.map(updateMessage);
 
-    if (this.overlayState.currentMessage && this.deletionMatchesMessage(deletion, this.overlayState.currentMessage)) {
+    if (
+      this.overlayState.currentMessage &&
+      this.deletionMatchesMessage(resolvedDeletion, this.overlayState.currentMessage)
+    ) {
       this.overlayState = {
         ...this.overlayState,
         currentMessage: null
@@ -837,11 +907,14 @@ export class AppController {
     }
 
     if (updatedMessages.size > 0) {
+      this.clearPendingDeletionKeys(deletion, resolvedDeletion);
       for (const updatedMessage of updatedMessages.values()) {
         this.events.emit("comment:update", updatedMessage);
       }
       return;
     }
+
+    this.queuePendingMessageDeletion(deletion);
 
     logger.warn(
       {
@@ -856,11 +929,159 @@ export class AppController {
     );
   }
 
-  private deletionMatchesMessage(deletion: LiveChatMessageDeletion, message: ChatMessage) {
-    return Boolean(
-      (deletion.targetPlatformMessageId && message.platformMessageId === deletion.targetPlatformMessageId) ||
-        (deletion.targetAuthorChannelId && message.authorChannelId === deletion.targetAuthorChannelId)
+  private queuePendingMessageDeletion(deletion: LiveChatMessageDeletion) {
+    const pendingKey = this.pendingDeletionKey(deletion);
+    if (!pendingKey) {
+      return false;
+    }
+
+    this.pendingMessageDeletions.set(pendingKey, deletion);
+    while (this.pendingMessageDeletions.size > 1000) {
+      const oldest = this.pendingMessageDeletions.keys().next().value;
+      if (!oldest) {
+        break;
+      }
+      this.pendingMessageDeletions.delete(oldest);
+    }
+    return true;
+  }
+
+  private duplicateRemovalStatus(
+    incoming: ChatMessage,
+    existing: ChatMessage
+  ): NonNullable<ChatMessage["deletionStatus"]> | null {
+    const existingText = existing.messageText.trim();
+    if (!existingText) {
+      return null;
+    }
+    if (isYoutubeSystemRetractedMessage(incoming.messageText)) {
+      return "retracted";
+    }
+    if (isYoutubeSystemDeletedMessage(incoming.messageText)) {
+      return "deleted";
+    }
+    return null;
+  }
+
+  private applyPendingMessageDeletionFor(platformMessageId: string) {
+    const pending = this.pendingMessageDeletions.get(platformMessageId);
+    if (!pending) {
+      return;
+    }
+    this.applyMessageDeletion(pending);
+  }
+
+  private findStoredMessage(platformMessageId: string) {
+    return (
+      this.messages.find((message) => message.platformMessageId === platformMessageId) ??
+      this.superChats.find((message) => message.platformMessageId === platformMessageId)
     );
+  }
+
+  private deletionMatchesMessage(deletion: LiveChatMessageDeletion, message: ChatMessage) {
+    if (deletion.targetPlatformMessageId) {
+      return message.platformMessageId === deletion.targetPlatformMessageId;
+    }
+    if (deletion.targetAuthorChannelId && !deletion.authorRetractionAnchor) {
+      return message.authorChannelId === deletion.targetAuthorChannelId;
+    }
+    return false;
+  }
+
+  private resolveDeletionTarget(deletion: LiveChatMessageDeletion): LiveChatMessageDeletion {
+    if (deletion.targetPlatformMessageId) {
+      const stored = this.findStoredMessage(deletion.targetPlatformMessageId);
+      if (stored && isYoutubeSystemRetractedMessage(stored.messageText) && stored.authorChannelId) {
+        const originalId = this.findAuthorRetractionTarget(stored.authorChannelId, stored.publishedAt);
+        if (originalId) {
+          return {
+            targetPlatformMessageId: originalId,
+            deletionStatus: deletion.deletionStatus,
+            deletedAt: deletion.deletedAt
+          };
+        }
+      }
+      return deletion;
+    }
+
+    if (deletion.targetAuthorChannelId && deletion.authorRetractionAnchor) {
+      const originalId = this.findAuthorRetractionTarget(
+        deletion.targetAuthorChannelId,
+        deletion.authorRetractionAnchor
+      );
+      if (originalId) {
+        return {
+          targetPlatformMessageId: originalId,
+          deletionStatus: deletion.deletionStatus,
+          deletedAt: deletion.deletedAt
+        };
+      }
+    }
+
+    return deletion;
+  }
+
+  private findAuthorRetractionTarget(authorChannelId: string, anchorPublishedAt: string) {
+    const anchorMs = Date.parse(anchorPublishedAt);
+    if (Number.isNaN(anchorMs)) {
+      return undefined;
+    }
+
+    const candidates = [...this.messages, ...this.superChats].filter((message) => {
+      if (message.authorChannelId !== authorChannelId || message.deletionStatus) {
+        return false;
+      }
+      const text = message.messageText.trim();
+      if (!text || isYoutubeSystemRetractedMessage(text) || isYoutubeSystemDeletedMessage(text)) {
+        return false;
+      }
+      const publishedMs = Date.parse(message.publishedAt);
+      return !Number.isNaN(publishedMs) && publishedMs <= anchorMs + 10_000;
+    });
+
+    candidates.sort((left, right) => Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
+    return candidates[0]?.platformMessageId;
+  }
+
+  private pendingDeletionKey(deletion: LiveChatMessageDeletion) {
+    if (deletion.targetPlatformMessageId) {
+      return deletion.targetPlatformMessageId;
+    }
+    if (deletion.targetAuthorChannelId && deletion.authorRetractionAnchor) {
+      return `${deletion.targetAuthorChannelId}:${deletion.authorRetractionAnchor}`;
+    }
+    if (deletion.targetAuthorChannelId) {
+      return deletion.targetAuthorChannelId;
+    }
+    return undefined;
+  }
+
+  private clearPendingDeletionKeys(
+    deletion: LiveChatMessageDeletion,
+    resolvedDeletion: LiveChatMessageDeletion
+  ) {
+    for (const key of [
+      this.pendingDeletionKey(deletion),
+      this.pendingDeletionKey(resolvedDeletion),
+      resolvedDeletion.targetPlatformMessageId
+    ]) {
+      if (key) {
+        this.pendingMessageDeletions.delete(key);
+      }
+    }
+  }
+
+  private replayResolvablePendingDeletions() {
+    for (const [key, pending] of [...this.pendingMessageDeletions.entries()]) {
+      const resolved = this.resolveDeletionTarget(pending);
+      if (
+        resolved.targetPlatformMessageId &&
+        this.findStoredMessage(resolved.targetPlatformMessageId)
+      ) {
+        this.pendingMessageDeletions.delete(key);
+        this.applyMessageDeletion(resolved);
+      }
+    }
   }
 
   private rememberFetchedMessageId(platformMessageId: string) {
@@ -903,6 +1124,7 @@ export class AppController {
     this.streamGeneration += 1;
     this.reconnectDelayMs = initialReconnectDelayMs;
     this.clearViewerMetricsTimer();
+    this.clearDeletionReconcileTimer();
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -937,6 +1159,64 @@ export class AppController {
     if (this.viewerMetricsTimer) {
       clearTimeout(this.viewerMetricsTimer);
       this.viewerMetricsTimer = null;
+    }
+  }
+
+  private scheduleDeletionReconcile(liveChatId: string, generation: number) {
+    this.clearDeletionReconcileTimer();
+    if (!this.isCurrentStream(generation) || !liveChatId) {
+      return;
+    }
+
+    const scheduleNext = () => {
+      if (!this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments) {
+        return;
+      }
+
+      this.deletionReconcileTimer = setTimeout(() => {
+        void this.reconcileDeletionsFromList(liveChatId, generation, "interval").then(() => {
+          scheduleNext();
+        });
+      }, deletionReconcileIntervalMs);
+    };
+
+    void this.reconcileDeletionsFromList(liveChatId, generation, "initial").then(() => {
+      scheduleNext();
+    });
+  }
+
+  private clearDeletionReconcileTimer() {
+    if (this.deletionReconcileTimer) {
+      clearTimeout(this.deletionReconcileTimer);
+      this.deletionReconcileTimer = null;
+    }
+  }
+
+  private async reconcileDeletionsFromList(
+    liveChatId: string,
+    generation: number,
+    reason: "initial" | "interval" | "pending-after-batch"
+  ) {
+    if (this.deletionReconcileInFlight || !this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments) {
+      return;
+    }
+
+    this.deletionReconcileInFlight = true;
+    try {
+      const deletions = await listLiveChatDeletionEvents(liveChatId);
+      if (deletions.length > 0) {
+        this.applyMessageDeletions(deletions);
+      }
+    } catch (error) {
+      logger.warn(
+        {
+          reason,
+          error: error instanceof Error ? error.message : String(error)
+        },
+        "Failed to reconcile YouTube deletion events from liveChatMessages.list."
+      );
+    } finally {
+      this.deletionReconcileInFlight = false;
     }
   }
 

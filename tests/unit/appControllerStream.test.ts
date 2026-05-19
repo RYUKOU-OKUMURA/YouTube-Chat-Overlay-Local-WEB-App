@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getLiveChatInfo: vi.fn(),
   getViewerMetrics: vi.fn(),
   streamLiveChatMessages: vi.fn(),
+  listLiveChatDeletionEvents: vi.fn(),
   classifyYouTubeError: vi.fn(),
   readSettings: vi.fn(),
   patchSettings: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock("@/server/youtube/api", () => ({
   getLiveChatInfo: mocks.getLiveChatInfo,
   getViewerMetrics: mocks.getViewerMetrics,
   streamLiveChatMessages: mocks.streamLiveChatMessages,
+  listLiveChatDeletionEvents: mocks.listLiveChatDeletionEvents,
   classifyYouTubeError: mocks.classifyYouTubeError
 }));
 
@@ -83,6 +85,7 @@ describe("AppController stream lifecycle", () => {
       checkedAt: "2026-04-27T12:03:00.000Z",
       status: "available"
     });
+    mocks.listLiveChatDeletionEvents.mockResolvedValue([]);
     mocks.classifyYouTubeError.mockImplementation((error: unknown) => {
       const classified = (error as { classified?: unknown }).classified;
       return classified ?? { kind: "unknown", message: "stream failed", retryable: false };
@@ -648,6 +651,93 @@ describe("AppController stream lifecycle", () => {
       "YouTube deletion event target was not found in retained chat messages."
     );
     warnSpy.mockRestore();
+    await controller.stopBroadcast();
+  });
+
+  test("marks a message deleted when the retraction batch arrives before the original message", async () => {
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      yield {
+        messages: [],
+        deletions: [
+          {
+            targetPlatformMessageId: "late-message",
+            deletionStatus: "retracted",
+            deletedAt: "2026-04-27T12:06:00.000Z"
+          }
+        ],
+        nextPageToken: "token-1"
+      };
+      yield {
+        messages: [message("late-message", { messageText: "hello" })],
+        deletions: [],
+        nextPageToken: "token-2"
+      };
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => {
+      const stored = (await controller.getMessages())[0];
+      expect(stored).toMatchObject({
+        id: "late-message",
+        messageText: "このコメントは投稿者により取り消されました。",
+        deletionStatus: "retracted"
+      });
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPlatformMessageId: "late-message" }),
+      "YouTube deletion event target was not found in retained chat messages."
+    );
+
+    warnSpy.mockRestore();
+    await controller.stopBroadcast();
+  });
+
+  test("marks a message retracted when the author placeholder arrives before the original message", async () => {
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      yield {
+        messages: [
+          message("placeholder-message", {
+            authorChannelId: "channel-1",
+            messageText: "メッセージが撤回されました",
+            publishedAt: "2026-04-27T12:01:00.000Z"
+          })
+        ],
+        deletions: [],
+        nextPageToken: "token-1"
+      };
+      yield {
+        messages: [
+          message("original-message", {
+            authorChannelId: "channel-1",
+            messageText: "hello",
+            publishedAt: "2026-04-27T12:00:00.000Z"
+          })
+        ],
+        deletions: [],
+        nextPageToken: "token-2"
+      };
+      await new Promise(() => undefined);
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => {
+      const messages = await controller.getMessages();
+      expect(messages.find((item) => item.id === "original-message")).toMatchObject({
+        messageText: "このコメントは投稿者により取り消されました。",
+        deletionStatus: "retracted"
+      });
+      expect(messages.some((item) => item.id === "placeholder-message")).toBe(false);
+    });
+
     await controller.stopBroadcast();
   });
 

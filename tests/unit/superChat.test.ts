@@ -111,6 +111,25 @@ describe("YouTube live chat mapping", () => {
     expect(message.publishedAt).toEqual(expect.any(String));
   });
 
+  test("prefers text message details when display message uses YouTube emoji shortcodes", () => {
+    const message = mapLiveChatMessage({
+      id: "emoji-message-2",
+      snippet: {
+        displayMessage: ":smiling_face: :red_heart:",
+        textMessageDetails: {
+          messageText: "ありがとう 😊❤️"
+        },
+        type: "textMessageEvent",
+        publishedAt: "2026-04-27T12:04:10.000Z"
+      },
+      authorDetails: {
+        displayName: "Emoji Viewer"
+      }
+    });
+
+    expect(message.messageText).toBe("ありがとう 😊❤️");
+  });
+
   test("prefers text message details when display message differs from Unicode emoji text", () => {
     const message = mapLiveChatMessage({
       id: "emoji-message-1",
@@ -210,6 +229,18 @@ describe("YouTube live chat mapping", () => {
       deletionStatus: "retracted",
       deletedAt: "2026-04-27T12:06:00.000Z"
     });
+  });
+
+  test("ignores author retraction events when retractedMessageId is missing", () => {
+    expect(
+      mapLiveChatMessageDeletion({
+        id: "retract-event-id",
+        snippet: {
+          type: "messageRetractedEvent",
+          publishedAt: "2026-04-27T12:06:00.000Z"
+        }
+      })
+    ).toBeNull();
   });
 
   test("maps tombstone events as deleted comments", () => {
