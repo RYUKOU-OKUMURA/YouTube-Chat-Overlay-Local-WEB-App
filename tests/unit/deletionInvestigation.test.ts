@@ -4,7 +4,9 @@
  */
 import { describe, expect, test } from "vitest";
 import {
+  deletionMergeKey,
   isYoutubeSystemRetractedMessage,
+  mapLiveChatMessage,
   mapLiveChatMessageDeletion,
   mapLiveChatStreamItems,
   mapRemovalPlaceholderDeletion,
@@ -16,7 +18,82 @@ function bindPrivateIngestMessages(controller: unknown) {
   return (controller as { ingestMessages: (messages: ChatMessage[]) => void }).ingestMessages.bind(controller);
 }
 
+function bindPrivateApplyMessageDeletions(controller: unknown) {
+  return (controller as { applyMessageDeletions: (deletions: unknown[]) => void }).applyMessageDeletions.bind(
+    controller
+  );
+}
+
 describe("deletion investigation — payload gaps", () => {
+  test("deletionMergeKey keeps distinct anchor-based retractions from the same author", () => {
+    const first = {
+      targetAuthorChannelId: "channel-1",
+      authorRetractionAnchor: "2026-04-27T12:01:00.000Z",
+      deletionStatus: "retracted" as const,
+      deletedAt: "2026-04-27T12:01:00.000Z"
+    };
+    const second = {
+      targetAuthorChannelId: "channel-1",
+      authorRetractionAnchor: "2026-04-27T12:05:00.000Z",
+      deletionStatus: "retracted" as const,
+      deletedAt: "2026-04-27T12:05:00.000Z"
+    };
+
+    expect(deletionMergeKey(first)).not.toBe(deletionMergeKey(second));
+
+    const merged = new Map<string, (typeof first)>();
+    for (const deletion of [first, second]) {
+      const key = deletionMergeKey(deletion);
+      if (key) {
+        merged.set(key, deletion);
+      }
+    }
+    expect([...merged.values()]).toHaveLength(2);
+  });
+
+  test("maps deleted placeholder to author anchor deletion", () => {
+    expect(
+      mapRemovalPlaceholderDeletion({
+        id: "placeholder-deleted",
+        platformMessageId: "placeholder-deleted",
+        authorName: "Viewer",
+        authorChannelId: "channel-1",
+        messageText: "[Message deleted]",
+        messageType: "textMessageEvent",
+        isMember: false,
+        isModerator: false,
+        isOwner: false,
+        isSuperChat: false,
+        publishedAt: "2026-04-27T12:02:00.000Z"
+      })
+    ).toEqual({
+      targetAuthorChannelId: "channel-1",
+      authorRetractionAnchor: "2026-04-27T12:02:00.000Z",
+      deletionStatus: "deleted",
+      deletedAt: "2026-04-27T12:02:00.000Z"
+    });
+  });
+
+  test("mapLiveChatMessage falls back to snippet.authorChannelId when authorDetails is missing", () => {
+    expect(
+      mapLiveChatMessage({
+        id: "msg-snippet-author",
+        snippet: {
+          type: "textMessageEvent",
+          authorChannelId: "snippet-channel-1",
+          displayMessage: "hello",
+          publishedAt: "2026-04-27T12:00:00.000Z"
+        },
+        authorDetails: {
+          displayName: "Viewer"
+        }
+      })
+    ).toMatchObject({
+      platformMessageId: "msg-snippet-author",
+      authorChannelId: "snippet-channel-1"
+    });
+  });
+
   test("detects Studio retract placeholder text", () => {
     expect(isYoutubeSystemRetractedMessage("メッセージが撤回されました")).toBe(true);
     expect(
@@ -189,6 +266,67 @@ describe("deletion investigation — appController matching", () => {
     });
   });
 
+  test("re-ingests evicted message with deletionStatus when registry recorded the deletion", async () => {
+    const { AppController } = await import("@/server/state/appController");
+    const { maxFetchedMessageIds } = await import("@/lib/messageRetention");
+    const controller = new AppController();
+    await controller.init();
+    const ingest = bindPrivateIngestMessages(controller);
+    const applyDeletions = bindPrivateApplyMessageDeletions(controller);
+    const controllerPrivate = controller as unknown as {
+      rememberFetchedMessageId: (id: string) => boolean;
+    };
+
+    const evictedMessage: ChatMessage = {
+      id: "evicted-msg",
+      platformMessageId: "evicted-msg",
+      authorName: "Viewer",
+      authorChannelId: "channel-1",
+      messageText: "will be evicted",
+      messageType: "textMessageEvent",
+      isMember: false,
+      isModerator: false,
+      isOwner: false,
+      isSuperChat: false,
+      publishedAt: "2026-04-27T12:00:00.000Z"
+    };
+
+    ingest([evictedMessage]);
+    const filler = Array.from({ length: 300 }, (_, index) => ({
+      id: `filler-${index}`,
+      platformMessageId: `filler-${index}`,
+      authorName: "Viewer",
+      authorChannelId: "channel-1",
+      messageText: `filler ${index}`,
+      messageType: "textMessageEvent",
+      isMember: false,
+      isModerator: false,
+      isOwner: false,
+      isSuperChat: false,
+      publishedAt: `2026-04-27T12:${String((index + 1) % 60).padStart(2, "0")}:00.000Z`
+    }));
+    ingest(filler);
+    expect((await controller.getMessages()).some((item) => item.platformMessageId === "evicted-msg")).toBe(false);
+
+    applyDeletions([
+      {
+        targetPlatformMessageId: "evicted-msg",
+        deletionStatus: "deleted",
+        deletedAt: "2026-04-27T12:05:00.000Z"
+      }
+    ]);
+
+    for (let index = 0; index < maxFetchedMessageIds; index += 1) {
+      controllerPrivate.rememberFetchedMessageId(`dedupe-${index}`);
+    }
+
+    ingest([{ ...evictedMessage, messageText: "resend after eviction" }]);
+    expect((await controller.getMessages()).find((item) => item.platformMessageId === "evicted-msg")).toMatchObject({
+      messageText: "このコメントは削除されました。",
+      deletionStatus: "deleted"
+    });
+  });
+
   test("documents fetchedMessageId dedup blocking re-ingest of same platformMessageId", async () => {
     const { AppController } = await import("@/server/state/appController");
     const controller = new AppController();
@@ -349,6 +487,154 @@ describe("deletion investigation — appController matching", () => {
       messageText: "このコメントは投稿者により取り消されました。",
       deletionStatus: "retracted"
     });
+  });
+
+  test("applies pending author-anchor retraction after the original message is ingested", async () => {
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    await controller.init();
+    const ingest = bindPrivateIngestMessages(controller);
+    const applyDeletions = bindPrivateApplyMessageDeletions(controller);
+
+    applyDeletions([
+      {
+        targetAuthorChannelId: "channel-1",
+        authorRetractionAnchor: "2026-04-27T12:01:00.000Z",
+        deletionStatus: "retracted",
+        deletedAt: "2026-04-27T12:01:00.000Z"
+      }
+    ]);
+
+    ingest([
+      {
+        id: "original-msg",
+        platformMessageId: "original-msg",
+        authorName: "Viewer",
+        authorChannelId: "channel-1",
+        messageText: "hello",
+        messageType: "textMessageEvent",
+        isMember: false,
+        isModerator: false,
+        isOwner: false,
+        isSuperChat: false,
+        publishedAt: "2026-04-27T12:00:00.000Z"
+      }
+    ]);
+
+    expect((await controller.getMessages()).find((item) => item.platformMessageId === "original-msg")).toMatchObject({
+      messageText: "このコメントは投稿者により取り消されました。",
+      deletionStatus: "retracted"
+    });
+  });
+
+  test("retracts only the message before the placeholder when the author posted twice", async () => {
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    await controller.init();
+    const ingest = bindPrivateIngestMessages(controller);
+
+    ingest([
+      {
+        id: "older-msg",
+        platformMessageId: "older-msg",
+        authorName: "Viewer",
+        authorChannelId: "channel-1",
+        messageText: "first",
+        messageType: "textMessageEvent",
+        isMember: false,
+        isModerator: false,
+        isOwner: false,
+        isSuperChat: false,
+        publishedAt: "2026-04-27T12:00:00.000Z"
+      },
+      {
+        id: "newer-msg",
+        platformMessageId: "newer-msg",
+        authorName: "Viewer",
+        authorChannelId: "channel-1",
+        messageText: "second",
+        messageType: "textMessageEvent",
+        isMember: false,
+        isModerator: false,
+        isOwner: false,
+        isSuperChat: false,
+        publishedAt: "2026-04-27T12:10:00.000Z"
+      }
+    ]);
+
+    ingest([
+      {
+        id: "placeholder-msg",
+        platformMessageId: "placeholder-msg",
+        authorName: "Viewer",
+        authorChannelId: "channel-1",
+        messageText: "メッセージが撤回されました",
+        messageType: "textMessageEvent",
+        isMember: false,
+        isModerator: false,
+        isOwner: false,
+        isSuperChat: false,
+        publishedAt: "2026-04-27T12:05:00.000Z"
+      }
+    ]);
+
+    const messages = await controller.getMessages();
+    expect(messages.find((item) => item.platformMessageId === "older-msg")).toMatchObject({
+      deletionStatus: "retracted"
+    });
+    expect(messages.find((item) => item.platformMessageId === "newer-msg")).toEqual(
+      expect.objectContaining({
+        messageText: "second"
+      })
+    );
+    expect(messages.find((item) => item.platformMessageId === "newer-msg")).not.toHaveProperty(
+      "deletionStatus"
+    );
+  });
+
+  test("links deleted placeholder text to the original message via author anchor", async () => {
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    await controller.init();
+    const ingest = bindPrivateIngestMessages(controller);
+
+    ingest([
+      {
+        id: "original-msg",
+        platformMessageId: "original-msg",
+        authorName: "Viewer",
+        authorChannelId: "channel-1",
+        messageText: "hello",
+        messageType: "textMessageEvent",
+        isMember: false,
+        isModerator: false,
+        isOwner: false,
+        isSuperChat: false,
+        publishedAt: "2026-04-27T12:00:00.000Z"
+      }
+    ]);
+
+    ingest([
+      {
+        id: "placeholder-deleted",
+        platformMessageId: "placeholder-deleted",
+        authorName: "Viewer",
+        authorChannelId: "channel-1",
+        messageText: "[Message deleted]",
+        messageType: "textMessageEvent",
+        isMember: false,
+        isModerator: false,
+        isOwner: false,
+        isSuperChat: false,
+        publishedAt: "2026-04-27T12:01:00.000Z"
+      }
+    ]);
+
+    expect((await controller.getMessages()).find((item) => item.platformMessageId === "original-msg")).toMatchObject({
+      messageText: "このコメントは削除されました。",
+      deletionStatus: "deleted"
+    });
+    expect((await controller.getMessages()).some((item) => item.platformMessageId === "placeholder-deleted")).toBe(false);
   });
 
   test("marks duplicate resend with deleted-looking text as deleted", async () => {

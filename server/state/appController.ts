@@ -7,9 +7,19 @@ import {
   listLiveChatDeletionEvents,
   streamLiveChatMessages,
   type LiveChatInfo,
-  type LiveChatMessageDeletion,
   type ClassifiedYouTubeError
 } from "@/server/youtube/api";
+import {
+  DeletionRegistry,
+  deletionKey,
+  deletionMatchesMessage,
+  deletionStatusText,
+  findAuthorRetractionTarget,
+  findStoredMessage,
+  isResolvableDeletion,
+  resolveDeletionTarget,
+  type LiveChatMessageDeletion
+} from "@/server/youtube/deletions";
 import { parseYouTubeVideoId } from "@/server/youtube/parseYouTubeUrl";
 import { getYouTubeStatus } from "@/server/youtube/oauth";
 import { patchSettings, readSettings } from "@/server/settings/settingsStore";
@@ -64,7 +74,9 @@ const maxReconnectDelayMs = 60000;
 const maxReconnectAttempts = 8;
 const maxShortStreamCloses = 5;
 const shortStreamCloseMs = 5000;
-const deletionReconcileIntervalMs = 5000;
+const minDeletionReconcileIntervalMs = 2000;
+const defaultDeletionReconcileIntervalMs = 5000;
+const maxDeletionReconcileBackoffMs = 60000;
 const autoDetectStartKey = "__auto_detect_current_live__";
 
 function clearBroadcastErrorFields(): Partial<BroadcastStatus> {
@@ -147,12 +159,6 @@ function buildYouTubeWatchUrl(videoId: string) {
   return `https://www.youtube.com/watch?v=${videoId}`;
 }
 
-function deletionStatusText(status: NonNullable<ChatMessage["deletionStatus"]>) {
-  return status === "retracted"
-    ? "このコメントは投稿者により取り消されました。"
-    : "このコメントは削除されました。";
-}
-
 export class AppController {
   readonly events = new TypedEmitter();
 
@@ -163,6 +169,10 @@ export class AppController {
   private fetchedMessageIds = new Set<string>();
   private fetchedMessageIdQueue: string[] = [];
   private pendingMessageDeletions = new Map<string, LiveChatMessageDeletion>();
+  private warnedPendingDeletionKeys = new Set<string>();
+  private deletionRegistry = new DeletionRegistry();
+  private deletionReconcileDelayMs = defaultDeletionReconcileIntervalMs;
+  private deletionReconcileBackoffMs = minDeletionReconcileIntervalMs;
   private nextPageToken: string | undefined;
   private streamAbortController: AbortController | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -364,6 +374,10 @@ export class AppController {
     this.fetchedMessageIds.clear();
     this.fetchedMessageIdQueue = [];
     this.pendingMessageDeletions.clear();
+    this.warnedPendingDeletionKeys.clear();
+    this.deletionRegistry.clear();
+    this.deletionReconcileDelayMs = defaultDeletionReconcileIntervalMs;
+    this.deletionReconcileBackoffMs = minDeletionReconcileIntervalMs;
     this.messages = [];
     this.superChats = [];
     this.settings = nextSettings;
@@ -649,6 +663,10 @@ export class AppController {
         }
 
         this.nextPageToken = batch.nextPageToken ?? this.nextPageToken;
+        if (typeof batch.pollingIntervalMillis === "number" && batch.pollingIntervalMillis > 0) {
+          this.deletionReconcileDelayMs = Math.max(batch.pollingIntervalMillis, minDeletionReconcileIntervalMs);
+          this.deletionReconcileBackoffMs = this.deletionReconcileDelayMs;
+        }
         this.markStableStreamIfReady(streamStartedAt);
         this.ingestMessages(batch.messages);
         this.applyMessageDeletions(batch.deletions ?? []);
@@ -775,7 +793,12 @@ export class AppController {
   }
 
   private ingestAuthorRetractionPlaceholder(message: ChatMessage) {
-    if (!isYoutubeSystemRetractedMessage(message.messageText) || !message.authorChannelId) {
+    const deletionStatus = isYoutubeSystemRetractedMessage(message.messageText)
+      ? "retracted"
+      : isYoutubeSystemDeletedMessage(message.messageText)
+        ? "deleted"
+        : null;
+    if (!deletionStatus || !message.authorChannelId) {
       return false;
     }
 
@@ -784,7 +807,7 @@ export class AppController {
       return true;
     }
 
-    const targetPlatformMessageId = this.findAuthorRetractionTarget(
+    const targetPlatformMessageId = this.resolveAuthorRetractionTarget(
       message.authorChannelId,
       message.publishedAt
     );
@@ -792,7 +815,7 @@ export class AppController {
       this.queuePendingMessageDeletion({
         targetAuthorChannelId: message.authorChannelId,
         authorRetractionAnchor: message.publishedAt,
-        deletionStatus: "retracted",
+        deletionStatus,
         deletedAt: message.publishedAt
       });
       return true;
@@ -800,7 +823,7 @@ export class AppController {
 
     this.applyMessageDeletion({
       targetPlatformMessageId,
-      deletionStatus: "retracted",
+      deletionStatus,
       deletedAt: message.publishedAt
     });
     return true;
@@ -811,6 +834,31 @@ export class AppController {
 
     for (const message of messages) {
       if (this.ingestAuthorRetractionPlaceholder(message)) {
+        continue;
+      }
+
+      this.deletionRegistry.rememberAuthorMessage(
+        message.authorChannelId,
+        message.platformMessageId,
+        message.publishedAt
+      );
+
+      const registryDeletion = this.deletionRegistry.getPlatformDeletion(message.platformMessageId);
+      if (registryDeletion) {
+        if (this.findStoredMessage(message.platformMessageId)) {
+          this.applyMessageDeletion({
+            targetPlatformMessageId: message.platformMessageId,
+            deletionStatus: registryDeletion.deletionStatus,
+            deletedAt: registryDeletion.deletedAt
+          });
+        } else if (this.rememberFetchedMessageId(message.platformMessageId)) {
+          freshMessages.push({
+            ...message,
+            messageText: deletionStatusText(registryDeletion.deletionStatus),
+            deletionStatus: registryDeletion.deletionStatus,
+            deletedAt: registryDeletion.deletedAt
+          });
+        }
         continue;
       }
 
@@ -865,11 +913,17 @@ export class AppController {
   }
 
   private applyMessageDeletion(deletion: LiveChatMessageDeletion) {
-    const resolvedDeletion = this.resolveDeletionTarget(deletion);
+    const timelineContext = this.authorTimelineContext();
+    const resolvedDeletion = resolveDeletionTarget(
+      deletion,
+      this.messages,
+      this.superChats,
+      timelineContext
+    );
     const updatedMessages = new Map<string, ChatMessage>();
 
     const updateMessage = (message: ChatMessage) => {
-      if (!this.deletionMatchesMessage(resolvedDeletion, message)) {
+      if (!deletionMatchesMessage(resolvedDeletion, message, this.messages, this.superChats, timelineContext)) {
         return message;
       }
 
@@ -897,7 +951,13 @@ export class AppController {
 
     if (
       this.overlayState.currentMessage &&
-      this.deletionMatchesMessage(resolvedDeletion, this.overlayState.currentMessage)
+      deletionMatchesMessage(
+        resolvedDeletion,
+        this.overlayState.currentMessage,
+        this.messages,
+        this.superChats,
+        timelineContext
+      )
     ) {
       this.overlayState = {
         ...this.overlayState,
@@ -907,6 +967,12 @@ export class AppController {
     }
 
     if (updatedMessages.size > 0) {
+      for (const updatedMessage of updatedMessages.values()) {
+        this.deletionRegistry.recordPlatformDeletion(updatedMessage.platformMessageId, {
+          deletionStatus: resolvedDeletion.deletionStatus,
+          deletedAt: resolvedDeletion.deletedAt
+        });
+      }
       this.clearPendingDeletionKeys(deletion, resolvedDeletion);
       for (const updatedMessage of updatedMessages.values()) {
         this.events.emit("comment:update", updatedMessage);
@@ -914,12 +980,31 @@ export class AppController {
       return;
     }
 
-    this.queuePendingMessageDeletion(deletion);
+    if (resolvedDeletion.targetPlatformMessageId) {
+      this.deletionRegistry.recordPlatformDeletion(resolvedDeletion.targetPlatformMessageId, {
+        deletionStatus: resolvedDeletion.deletionStatus,
+        deletedAt: resolvedDeletion.deletedAt
+      });
+    }
+
+    const queued = this.queuePendingMessageDeletion(deletion);
+    if (!queued) {
+      return;
+    }
+
+    const pendingKey = deletionKey(deletion);
+    if (pendingKey && this.warnedPendingDeletionKeys.has(pendingKey)) {
+      return;
+    }
+    if (pendingKey) {
+      this.warnedPendingDeletionKeys.add(pendingKey);
+    }
 
     logger.warn(
       {
         targetPlatformMessageId: deletion.targetPlatformMessageId,
         targetAuthorChannelId: deletion.targetAuthorChannelId,
+        resolvedTargetPlatformMessageId: resolvedDeletion.targetPlatformMessageId,
         deletionStatus: deletion.deletionStatus,
         deletedAt: deletion.deletedAt,
         currentVideoId: this.broadcastStatus.currentVideoId,
@@ -972,99 +1057,52 @@ export class AppController {
   }
 
   private findStoredMessage(platformMessageId: string) {
+    return findStoredMessage(this.messages, this.superChats, platformMessageId);
+  }
+
+  private authorTimelineContext() {
+    const timeline: Array<{ platformMessageId: string; publishedAt: string }> = [];
+    for (const message of [...this.messages, ...this.superChats]) {
+      if (message.authorChannelId) {
+        timeline.push({
+          platformMessageId: message.platformMessageId,
+          publishedAt: message.publishedAt
+        });
+      }
+    }
+    return timeline;
+  }
+
+  private resolveAuthorRetractionTarget(authorChannelId: string, anchorPublishedAt: string) {
     return (
-      this.messages.find((message) => message.platformMessageId === platformMessageId) ??
-      this.superChats.find((message) => message.platformMessageId === platformMessageId)
+      findAuthorRetractionTarget(this.messages, this.superChats, authorChannelId, anchorPublishedAt) ??
+      this.deletionRegistry.findAuthorRetractionTarget(authorChannelId, anchorPublishedAt)
     );
   }
 
-  private deletionMatchesMessage(deletion: LiveChatMessageDeletion, message: ChatMessage) {
-    if (deletion.targetPlatformMessageId) {
-      return message.platformMessageId === deletion.targetPlatformMessageId;
-    }
-    if (deletion.targetAuthorChannelId && !deletion.authorRetractionAnchor) {
-      return message.authorChannelId === deletion.targetAuthorChannelId;
-    }
-    return false;
-  }
-
-  private resolveDeletionTarget(deletion: LiveChatMessageDeletion): LiveChatMessageDeletion {
-    if (deletion.targetPlatformMessageId) {
-      const stored = this.findStoredMessage(deletion.targetPlatformMessageId);
-      if (stored && isYoutubeSystemRetractedMessage(stored.messageText) && stored.authorChannelId) {
-        const originalId = this.findAuthorRetractionTarget(stored.authorChannelId, stored.publishedAt);
-        if (originalId) {
-          return {
-            targetPlatformMessageId: originalId,
-            deletionStatus: deletion.deletionStatus,
-            deletedAt: deletion.deletedAt
-          };
-        }
-      }
-      return deletion;
-    }
-
-    if (deletion.targetAuthorChannelId && deletion.authorRetractionAnchor) {
-      const originalId = this.findAuthorRetractionTarget(
-        deletion.targetAuthorChannelId,
-        deletion.authorRetractionAnchor
-      );
-      if (originalId) {
-        return {
-          targetPlatformMessageId: originalId,
-          deletionStatus: deletion.deletionStatus,
-          deletedAt: deletion.deletedAt
-        };
-      }
-    }
-
-    return deletion;
-  }
-
-  private findAuthorRetractionTarget(authorChannelId: string, anchorPublishedAt: string) {
-    const anchorMs = Date.parse(anchorPublishedAt);
-    if (Number.isNaN(anchorMs)) {
-      return undefined;
-    }
-
-    const candidates = [...this.messages, ...this.superChats].filter((message) => {
-      if (message.authorChannelId !== authorChannelId || message.deletionStatus) {
-        return false;
-      }
-      const text = message.messageText.trim();
-      if (!text || isYoutubeSystemRetractedMessage(text) || isYoutubeSystemDeletedMessage(text)) {
-        return false;
-      }
-      const publishedMs = Date.parse(message.publishedAt);
-      return !Number.isNaN(publishedMs) && publishedMs <= anchorMs + 10_000;
-    });
-
-    candidates.sort((left, right) => Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
-    return candidates[0]?.platformMessageId;
-  }
-
   private pendingDeletionKey(deletion: LiveChatMessageDeletion) {
-    if (deletion.targetPlatformMessageId) {
-      return deletion.targetPlatformMessageId;
-    }
-    if (deletion.targetAuthorChannelId && deletion.authorRetractionAnchor) {
-      return `${deletion.targetAuthorChannelId}:${deletion.authorRetractionAnchor}`;
-    }
-    if (deletion.targetAuthorChannelId) {
-      return deletion.targetAuthorChannelId;
-    }
-    return undefined;
+    return deletionKey(deletion);
   }
 
   private clearPendingDeletionKeys(
     deletion: LiveChatMessageDeletion,
     resolvedDeletion: LiveChatMessageDeletion
   ) {
-    for (const key of [
+    const keys = new Set<string | undefined>([
       this.pendingDeletionKey(deletion),
       this.pendingDeletionKey(resolvedDeletion),
-      resolvedDeletion.targetPlatformMessageId
-    ]) {
+      resolvedDeletion.targetPlatformMessageId,
+      deletion.targetPlatformMessageId
+    ]);
+
+    if (deletion.targetAuthorChannelId && deletion.authorRetractionAnchor) {
+      keys.add(`${deletion.targetAuthorChannelId}:${deletion.authorRetractionAnchor}`);
+    }
+    if (resolvedDeletion.targetAuthorChannelId && resolvedDeletion.authorRetractionAnchor) {
+      keys.add(`${resolvedDeletion.targetAuthorChannelId}:${resolvedDeletion.authorRetractionAnchor}`);
+    }
+
+    for (const key of keys) {
       if (key) {
         this.pendingMessageDeletions.delete(key);
       }
@@ -1072,15 +1110,12 @@ export class AppController {
   }
 
   private replayResolvablePendingDeletions() {
-    for (const [key, pending] of [...this.pendingMessageDeletions.entries()]) {
-      const resolved = this.resolveDeletionTarget(pending);
-      if (
-        resolved.targetPlatformMessageId &&
-        this.findStoredMessage(resolved.targetPlatformMessageId)
-      ) {
-        this.pendingMessageDeletions.delete(key);
-        this.applyMessageDeletion(resolved);
+    const timelineContext = this.authorTimelineContext();
+    for (const [, pending] of [...this.pendingMessageDeletions.entries()]) {
+      if (!isResolvableDeletion(pending, this.messages, this.superChats, timelineContext)) {
+        continue;
       }
+      this.applyMessageDeletion(pending);
     }
   }
 
@@ -1177,7 +1212,7 @@ export class AppController {
         void this.reconcileDeletionsFromList(liveChatId, generation, "interval").then(() => {
           scheduleNext();
         });
-      }, deletionReconcileIntervalMs);
+      }, this.deletionReconcileBackoffMs);
     };
 
     void this.reconcileDeletionsFromList(liveChatId, generation, "initial").then(() => {
@@ -1203,14 +1238,26 @@ export class AppController {
 
     this.deletionReconcileInFlight = true;
     try {
-      const deletions = await listLiveChatDeletionEvents(liveChatId);
-      if (deletions.length > 0) {
-        this.applyMessageDeletions(deletions);
+      const result = await listLiveChatDeletionEvents(liveChatId, {
+        paginateAll: reason === "initial"
+      });
+      this.deletionReconcileDelayMs = Math.max(result.pollingIntervalMillis, minDeletionReconcileIntervalMs);
+      this.deletionReconcileBackoffMs = this.deletionReconcileDelayMs;
+      if (result.deletions.length > 0) {
+        this.applyMessageDeletions(result.deletions);
       }
     } catch (error) {
+      const classified = classifyYouTubeError(error);
+      if (classified.kind === "rateLimitExceeded" || classified.kind === "quotaExceeded") {
+        this.deletionReconcileBackoffMs = Math.min(
+          Math.max(this.deletionReconcileBackoffMs * 2, this.deletionReconcileDelayMs),
+          maxDeletionReconcileBackoffMs
+        );
+      }
       logger.warn(
         {
           reason,
+          errorKind: classified.kind,
           error: error instanceof Error ? error.message : String(error)
         },
         "Failed to reconcile YouTube deletion events from liveChatMessages.list."

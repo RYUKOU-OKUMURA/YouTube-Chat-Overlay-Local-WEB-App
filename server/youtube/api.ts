@@ -5,10 +5,24 @@ import type { youtube_v3 } from "googleapis";
 import { getAuthorizedClient } from "@/server/youtube/oauth";
 import { logger } from "@/lib/logger";
 import {
-  isYoutubeSystemDeletedMessage,
-  isYoutubeSystemRetractedMessage
-} from "@/lib/youtubeSystemMessages";
+  deletionKey,
+  deletionMergeKey,
+  isDeletionEventType,
+  mapLiveChatMessageDeletion,
+  mapRemovalPlaceholderDeletion,
+  readPollingIntervalMillis,
+  type LiveChatMessageDeletion
+} from "@/server/youtube/deletions";
 
+export {
+  deletionKey,
+  deletionMergeKey,
+  isDeletionEventType,
+  mapLiveChatMessageDeletion,
+  mapRemovalPlaceholderDeletion,
+  readPollingIntervalMillis,
+  type LiveChatMessageDeletion
+} from "@/server/youtube/deletions";
 export { isYoutubeSystemDeletedMessage, isYoutubeSystemRetractedMessage } from "@/lib/youtubeSystemMessages";
 import type { ChatMessage } from "@/types";
 
@@ -35,20 +49,13 @@ export type LiveChatStreamBatch = {
   deletions: LiveChatMessageDeletion[];
   nextPageToken?: string;
   offlineAt?: string;
+  pollingIntervalMillis?: number;
 };
 
-type LiveChatMessageDeletionBase = {
-  deletionStatus: NonNullable<ChatMessage["deletionStatus"]>;
-  deletedAt: string;
-  /** Author retract placeholders: match the latest message from the author at or before this time. */
-  authorRetractionAnchor?: string;
+export type ListDeletionResult = {
+  deletions: LiveChatMessageDeletion[];
+  pollingIntervalMillis: number;
 };
-
-export type LiveChatMessageDeletion = LiveChatMessageDeletionBase &
-  (
-    | { targetPlatformMessageId: string; targetAuthorChannelId?: never; authorRetractionAnchor?: never }
-    | { targetPlatformMessageId?: never; targetAuthorChannelId: string; authorRetractionAnchor?: string }
-  );
 
 export type StreamLiveChatMessagesInput = {
   liveChatId: string;
@@ -433,27 +440,19 @@ export async function* streamLiveChatMessages({
       messages: resolvedMessages,
       deletions,
       nextPageToken: normalized.nextPageToken ?? undefined,
-      offlineAt: normalized.offlineAt ?? undefined
+      offlineAt: normalized.offlineAt ?? undefined,
+      pollingIntervalMillis: readPollingIntervalMillis(normalized)
     };
   }
 }
 
-export async function listLiveChatDeletionEvents(liveChatId: string) {
-  const auth = await getAuthorizedClient();
-  const youtube = google.youtube({ version: "v3", auth });
-  const response = await youtube.liveChatMessages.list({
-    liveChatId,
-    part: ["id", "snippet", "authorDetails"],
-    maxResults: 200
-  });
-  const items = (response.data.items ?? []).map((item) => normalizeStreamMessage(item));
-  const { messages, deletions } = mapLiveChatStreamItems(items);
-  const placeholderDeletions = messages
-    .map((message) => mapRemovalPlaceholderDeletion(message))
-    .filter((deletion): deletion is LiveChatMessageDeletion => deletion !== null);
+function mergeDeletionEvents(
+  deletions: LiveChatMessageDeletion[],
+  placeholderDeletions: LiveChatMessageDeletion[]
+) {
   const merged = new Map<string, LiveChatMessageDeletion>();
   for (const deletion of [...deletions, ...placeholderDeletions]) {
-    const key = deletion.targetPlatformMessageId ?? deletion.targetAuthorChannelId;
+    const key = deletionKey(deletion);
     if (key) {
       merged.set(key, deletion);
     }
@@ -461,26 +460,42 @@ export async function listLiveChatDeletionEvents(liveChatId: string) {
   return [...merged.values()];
 }
 
-export function mapRemovalPlaceholderDeletion(message: ChatMessage): LiveChatMessageDeletion | null {
-  if (isYoutubeSystemRetractedMessage(message.messageText)) {
-    if (!message.authorChannelId) {
-      return null;
+export async function listLiveChatDeletionEvents(
+  liveChatId: string,
+  options?: { paginateAll?: boolean }
+): Promise<ListDeletionResult> {
+  const auth = await getAuthorizedClient();
+  const youtube = google.youtube({ version: "v3", auth });
+  const merged = new Map<string, LiveChatMessageDeletion>();
+  let pollingIntervalMillis = 5000;
+  let pageToken: string | undefined;
+
+  do {
+    const response = await youtube.liveChatMessages.list({
+      liveChatId,
+      part: ["id", "snippet", "authorDetails"],
+      maxResults: 200,
+      pageToken
+    });
+    pollingIntervalMillis = readPollingIntervalMillis(response.data);
+    const items = (response.data.items ?? []).map((item) => normalizeStreamMessage(item));
+    const { messages, deletions } = mapLiveChatStreamItems(items);
+    const placeholderDeletions = messages
+      .map((message) => mapRemovalPlaceholderDeletion(message))
+      .filter((deletion): deletion is LiveChatMessageDeletion => deletion !== null);
+    for (const deletion of mergeDeletionEvents(deletions, placeholderDeletions)) {
+      const key = deletionKey(deletion);
+      if (key) {
+        merged.set(key, deletion);
+      }
     }
-    return {
-      targetAuthorChannelId: message.authorChannelId,
-      authorRetractionAnchor: message.publishedAt,
-      deletionStatus: "retracted",
-      deletedAt: message.publishedAt
-    };
-  }
-  if (isYoutubeSystemDeletedMessage(message.messageText)) {
-    return {
-      targetPlatformMessageId: message.platformMessageId,
-      deletionStatus: "deleted",
-      deletedAt: message.publishedAt
-    };
-  }
-  return null;
+    pageToken = readString(response.data.nextPageToken) ?? undefined;
+  } while (options?.paginateAll && pageToken);
+
+  return {
+    deletions: [...merged.values()],
+    pollingIntervalMillis
+  };
 }
 
 export async function* parseLiveChatStreamResponses(
@@ -709,6 +724,7 @@ export function classifyYouTubeError(error: unknown): ClassifiedYouTubeError {
 
 export function mapLiveChatMessage(item: youtube_v3.Schema$LiveChatMessage): ChatMessage {
   const snippet = item.snippet;
+  const snippetRecord = isRecord(snippet) ? snippet : undefined;
   const author = item.authorDetails;
   const superChat = snippet?.superChatDetails;
   const superSticker = snippet?.superStickerDetails;
@@ -727,7 +743,11 @@ export function mapLiveChatMessage(item: youtube_v3.Schema$LiveChatMessage): Cha
     platformMessageId: id,
     authorName: author?.displayName ?? "Unknown",
     authorImageUrl: author?.profileImageUrl ?? undefined,
-    authorChannelId: author?.channelId ?? undefined,
+    authorChannelId:
+      author?.channelId ??
+      readString(snippetRecord?.authorChannelId) ??
+      readString(snippetRecord?.author_channel_id) ??
+      undefined,
     messageText: messageText ?? "",
     messageType: snippet?.type ?? "textMessageEvent",
     isMember: Boolean(author?.isChatSponsor),
@@ -923,95 +943,8 @@ function chunkArray<T>(values: T[], size: number) {
   return chunks;
 }
 
-export function mapLiveChatMessageDeletion(item: youtube_v3.Schema$LiveChatMessage): LiveChatMessageDeletion | null {
-  const snippet = item.snippet;
-  if (!snippet) {
-    return null;
-  }
-  const type = snippet?.type;
-  if (type === "messageDeletedEvent" || type === "tombstone") {
-    const targetPlatformMessageId =
-      type === "tombstone"
-        ? snippet.messageDeletedDetails?.deletedMessageId ?? tombstoneTargetMessageId(item)
-        : deletedMessageTargetMessageId(item);
-    return targetPlatformMessageId
-      ? {
-          targetPlatformMessageId,
-          deletionStatus: "deleted",
-          deletedAt: snippet.publishedAt ?? new Date().toISOString()
-        }
-      : null;
-  }
-
-  if (type === "messageRetractedEvent") {
-    const targetPlatformMessageId = retractionTargetMessageId(item);
-    return targetPlatformMessageId
-      ? {
-          targetPlatformMessageId,
-          deletionStatus: "retracted",
-          deletedAt: snippet.publishedAt ?? new Date().toISOString()
-        }
-      : null;
-  }
-
-  if (type === "userBannedEvent") {
-    const targetAuthorChannelId = bannedAuthorChannelId(item);
-    return targetAuthorChannelId
-      ? {
-          targetAuthorChannelId,
-          deletionStatus: "deleted",
-          deletedAt: snippet.publishedAt ?? new Date().toISOString()
-        }
-      : null;
-  }
-
-  return null;
-}
-
-function isDeletionEventType(type: string | null | undefined) {
-  return type === "messageDeletedEvent" || type === "messageRetractedEvent" || type === "tombstone" || type === "userBannedEvent";
-}
-
 function firstNonBlankString(...values: Array<string | null | undefined>) {
   return values.find((value) => typeof value === "string" && value.trim().length > 0);
-}
-
-function tombstoneTargetMessageId(item: youtube_v3.Schema$LiveChatMessage) {
-  const snippet = isRecord(item.snippet) ? item.snippet : undefined;
-  const tombstoneDetails = readRecordField(snippet, "tombstoneDetails", "tombstone_details");
-
-  return (
-    readTargetMessageId(tombstoneDetails) ??
-    readTargetMessageId(snippet) ??
-    readString(item.id) ??
-    undefined
-  );
-}
-
-function deletedMessageTargetMessageId(item: youtube_v3.Schema$LiveChatMessage) {
-  const snippet = isRecord(item.snippet) ? item.snippet : undefined;
-  const messageDeletedDetails = readRecordField(snippet, "messageDeletedDetails", "message_deleted_details");
-
-  return readTargetMessageId(messageDeletedDetails) ?? undefined;
-}
-
-function retractionTargetMessageId(item: youtube_v3.Schema$LiveChatMessage) {
-  const snippet = isRecord(item.snippet) ? item.snippet : undefined;
-  const messageRetractedDetails = readRecordField(snippet, "messageRetractedDetails", "message_retracted_details");
-
-  return readTargetMessageId(messageRetractedDetails) ?? undefined;
-}
-
-function bannedAuthorChannelId(item: youtube_v3.Schema$LiveChatMessage) {
-  const snippet = isRecord(item.snippet) ? item.snippet : undefined;
-  const userBannedDetails = readRecordField(snippet, "userBannedDetails", "user_banned_details");
-  const bannedUserDetails = readRecordField(userBannedDetails, "bannedUserDetails", "banned_user_details");
-
-  return (
-    readString(bannedUserDetails?.channelId) ??
-    readString(bannedUserDetails?.channel_id) ??
-    undefined
-  );
 }
 
 function normalizeStreamResponse(value: unknown): youtube_v3.Schema$LiveChatMessageListResponse {
@@ -1028,10 +961,18 @@ function normalizeStreamResponse(value: unknown): youtube_v3.Schema$LiveChatMess
     );
   }
 
+  const pollingIntervalMillis =
+    typeof value.pollingIntervalMillis === "number"
+      ? value.pollingIntervalMillis
+      : typeof value.polling_interval_millis === "number"
+        ? value.polling_interval_millis
+        : undefined;
+
   return {
     ...value,
     nextPageToken: readString(value.nextPageToken) ?? readString(value.next_page_token) ?? undefined,
     offlineAt: readString(value.offlineAt) ?? readString(value.offline_at) ?? undefined,
+    pollingIntervalMillis,
     items: Array.isArray(value.items) ? value.items.map(normalizeStreamMessage) : undefined
   } as youtube_v3.Schema$LiveChatMessageListResponse;
 }

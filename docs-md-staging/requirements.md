@@ -284,6 +284,9 @@ URL:
 - 正常 batch 受信時は再接続カウンタをリセットする。
 - quota、rate limit、認可エラー、チャット終了、完全なJSONのparse失敗、応答形式エラーなどは terminal error として停止する。stream JSON の途中終了は一時的な network error として再接続する。
 - `BroadcastStatus` は `errorKind`、`errorReason`、`errorPhase`、`errorAction` を保持する。
+- 削除・撤回イベントは保持中コメントを「削除されました」「投稿者により取り消されました」表示に更新する。300件を超えて evict されたコメントも削除レジストリで追跡する。
+- `userBannedEvent` 受信時は、保持中の同一著者コメントをすべて削除表示にする（YouTube API は過去ログ削除を保証しないが、オーバーレイ用途で一括非表示とする）。
+- 削除補完の `liveChatMessages.list` は `pollingIntervalMillis` 以上の間隔で呼び、初回 reconcile のみ `pageToken` で全ページ取得する。
 
 ### FR-004 コメント一覧
 
