@@ -134,7 +134,25 @@ describe("deletion investigation — payload gaps", () => {
     });
   });
 
-  test("messageRetractedEvent without retractedMessageId is ignored (item.id is the event id, not the target)", () => {
+  test("messageRetractedEvent without retractedMessageId falls back to author anchor resolution when channelId is present", () => {
+    expect(
+      mapLiveChatMessageDeletion({
+        id: "retract-event-id",
+        snippet: {
+          type: "messageRetractedEvent",
+          publishedAt: "2026-04-27T12:06:00.000Z",
+          authorChannelId: "channel-1"
+        }
+      })
+    ).toEqual({
+      targetAuthorChannelId: "channel-1",
+      authorRetractionAnchor: "2026-04-27T12:06:00.000Z",
+      deletionStatus: "retracted",
+      deletedAt: "2026-04-27T12:06:00.000Z"
+    });
+  });
+
+  test("messageRetractedEvent without retractedMessageId and without authorChannelId is ignored", () => {
     expect(
       mapLiveChatMessageDeletion({
         id: "retract-event-id",
@@ -146,24 +164,49 @@ describe("deletion investigation — payload gaps", () => {
     ).toBeNull();
   });
 
-  test("messageRetractedEvent without retractedMessageId does not produce stream deletions", () => {
+  test("messageRetractedEvent without retractedMessageId produces author anchor stream deletions", () => {
     expect(
       mapLiveChatStreamItems([
         {
           id: "retract-event-id",
           snippet: {
             type: "messageRetractedEvent",
-            publishedAt: "2026-04-27T12:06:00.000Z"
+            publishedAt: "2026-04-27T12:06:00.000Z",
+            authorChannelId: "channel-1"
           }
         }
       ])
     ).toEqual({
       messages: [],
-      deletions: []
+      deletions: [
+        {
+          targetAuthorChannelId: "channel-1",
+          authorRetractionAnchor: "2026-04-27T12:06:00.000Z",
+          deletionStatus: "retracted",
+          deletedAt: "2026-04-27T12:06:00.000Z"
+        }
+      ]
     });
   });
 
-  test("messageDeletedEvent without deletedMessageId is ignored", () => {
+  test("messageDeletedEvent without deletedMessageId falls back to author anchor resolution when channelId is present", () => {
+    const result = mapLiveChatMessageDeletion({
+      id: "delete-event-id",
+      snippet: {
+        type: "messageDeletedEvent",
+        publishedAt: "2026-04-27T12:05:00.000Z",
+        authorChannelId: "channel-1"
+      }
+    });
+    expect(result).toEqual({
+      targetAuthorChannelId: "channel-1",
+      authorRetractionAnchor: "2026-04-27T12:05:00.000Z",
+      deletionStatus: "deleted",
+      deletedAt: "2026-04-27T12:05:00.000Z"
+    });
+  });
+
+  test("messageDeletedEvent without deletedMessageId and without authorChannelId is ignored", () => {
     const result = mapLiveChatMessageDeletion({
       id: "delete-event-id",
       snippet: {

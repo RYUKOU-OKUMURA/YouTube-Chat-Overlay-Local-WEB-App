@@ -143,24 +143,46 @@ export function mapLiveChatMessageDeletion(item: youtube_v3.Schema$LiveChatMessa
       type === "tombstone"
         ? snippet.messageDeletedDetails?.deletedMessageId ?? tombstoneTargetMessageId(item)
         : deletedMessageTargetMessageId(item);
-    return targetPlatformMessageId
-      ? {
-          targetPlatformMessageId,
-          deletionStatus: "deleted",
-          deletedAt: snippet.publishedAt ?? new Date().toISOString()
-        }
-      : null;
+    if (targetPlatformMessageId) {
+      return {
+        targetPlatformMessageId,
+        deletionStatus: "deleted",
+        deletedAt: snippet.publishedAt ?? new Date().toISOString()
+      };
+    }
+    // Fallback: When targetPlatformMessageId is missing (e.g., self-deletions), use author-anchor resolution.
+    const targetAuthorChannelId = item.authorDetails?.channelId ?? snippet.authorChannelId ?? undefined;
+    if (targetAuthorChannelId) {
+      return {
+        targetAuthorChannelId,
+        authorRetractionAnchor: snippet.publishedAt ?? undefined,
+        deletionStatus: "deleted",
+        deletedAt: snippet.publishedAt ?? new Date().toISOString()
+      };
+    }
+    return null;
   }
 
   if (type === "messageRetractedEvent") {
     const targetPlatformMessageId = retractionTargetMessageId(item);
-    return targetPlatformMessageId
-      ? {
-          targetPlatformMessageId,
-          deletionStatus: "retracted",
-          deletedAt: snippet.publishedAt ?? new Date().toISOString()
-        }
-      : null;
+    if (targetPlatformMessageId) {
+      return {
+        targetPlatformMessageId,
+        deletionStatus: "retracted",
+        deletedAt: snippet.publishedAt ?? new Date().toISOString()
+      };
+    }
+    // Fallback: When targetPlatformMessageId is missing (e.g., self-retractions), use author-anchor resolution.
+    const targetAuthorChannelId = item.authorDetails?.channelId ?? snippet.authorChannelId ?? undefined;
+    if (targetAuthorChannelId) {
+      return {
+        targetAuthorChannelId,
+        authorRetractionAnchor: snippet.publishedAt ?? undefined,
+        deletionStatus: "retracted",
+        deletedAt: snippet.publishedAt ?? new Date().toISOString()
+      };
+    }
+    return null;
   }
 
   if (type === "userBannedEvent") {
