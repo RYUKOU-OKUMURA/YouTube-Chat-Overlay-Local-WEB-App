@@ -7,7 +7,6 @@ const mocks = vi.hoisted(() => ({
   getLiveChatInfo: vi.fn(),
   getViewerMetrics: vi.fn(),
   streamLiveChatMessages: vi.fn(),
-  listLiveChatDeletionEvents: vi.fn(),
   classifyYouTubeError: vi.fn(),
   readSettings: vi.fn(),
   patchSettings: vi.fn(),
@@ -19,7 +18,6 @@ vi.mock("@/server/youtube/api", () => ({
   getLiveChatInfo: mocks.getLiveChatInfo,
   getViewerMetrics: mocks.getViewerMetrics,
   streamLiveChatMessages: mocks.streamLiveChatMessages,
-  listLiveChatDeletionEvents: mocks.listLiveChatDeletionEvents,
   classifyYouTubeError: mocks.classifyYouTubeError
 }));
 
@@ -85,7 +83,6 @@ describe("AppController stream lifecycle", () => {
       checkedAt: "2026-04-27T12:03:00.000Z",
       status: "available"
     });
-    mocks.listLiveChatDeletionEvents.mockResolvedValue({ deletions: [], pollingIntervalMillis: 5000 });
     mocks.classifyYouTubeError.mockImplementation((error: unknown) => {
       const classified = (error as { classified?: unknown }).classified;
       return classified ?? { kind: "unknown", message: "stream failed", retryable: false };
@@ -741,64 +738,6 @@ describe("AppController stream lifecycle", () => {
     await controller.stopBroadcast();
   });
 
-  test("reconciles multiple author-anchor retractions from list without overwriting", async () => {
-    mocks.listLiveChatDeletionEvents.mockResolvedValue({
-      deletions: [
-        {
-          targetAuthorChannelId: "channel-1",
-          authorRetractionAnchor: "2026-04-27T12:01:00.000Z",
-          deletionStatus: "retracted",
-          deletedAt: "2026-04-27T12:01:00.000Z"
-        },
-        {
-          targetAuthorChannelId: "channel-1",
-          authorRetractionAnchor: "2026-04-27T12:05:00.000Z",
-          deletionStatus: "retracted",
-          deletedAt: "2026-04-27T12:05:00.000Z"
-        }
-      ],
-      pollingIntervalMillis: 5000
-    });
-    mocks.streamLiveChatMessages.mockImplementation(async function* () {
-      yield {
-        messages: [
-          message("old-msg", {
-            authorChannelId: "channel-1",
-            messageText: "first",
-            publishedAt: "2026-04-27T12:00:00.000Z"
-          }),
-          message("new-msg", {
-            authorChannelId: "channel-1",
-            messageText: "second",
-            publishedAt: "2026-04-27T12:04:00.000Z"
-          })
-        ],
-        deletions: [],
-        nextPageToken: "token-1"
-      };
-      await new Promise(() => undefined);
-    });
-
-    const { AppController } = await import("@/server/state/appController");
-    const controller = new AppController();
-
-    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
-    await vi.waitFor(async () => expect(await controller.getMessages()).toHaveLength(2));
-    await vi.waitFor(() => expect(mocks.listLiveChatDeletionEvents).toHaveBeenCalled());
-
-    const messages = await controller.getMessages();
-    expect(messages.find((item) => item.id === "old-msg")).toMatchObject({
-      messageText: "このコメントは投稿者により取り消されました。",
-      deletionStatus: "retracted"
-    });
-    expect(messages.find((item) => item.id === "new-msg")).toMatchObject({
-      messageText: "このコメントは投稿者により取り消されました。",
-      deletionStatus: "retracted"
-    });
-
-    await controller.stopBroadcast();
-  });
-
   test("marks retained messages from a banned author as deleted", async () => {
     const gate = deferred();
     const updates: ChatMessage[] = [];
@@ -1001,109 +940,6 @@ describe("AppController stream lifecycle", () => {
     await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=aaaaaaaaaaa" });
     expect((await controller.getState()).superChats).toEqual([]);
     await controller.stopBroadcast();
-  });
-
-  test("respects pollingIntervalMillis from list reconcile before scheduling the next poll", async () => {
-    vi.useFakeTimers();
-    mocks.listLiveChatDeletionEvents.mockResolvedValue({
-      deletions: [],
-      pollingIntervalMillis: 10000
-    });
-    mocks.streamLiveChatMessages.mockImplementation(async function* () {
-      await new Promise(() => undefined);
-    });
-
-    const { AppController } = await import("@/server/state/appController");
-    const controller = new AppController();
-    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
-    await vi.waitFor(() => expect(mocks.listLiveChatDeletionEvents).toHaveBeenCalledTimes(1));
-
-    mocks.listLiveChatDeletionEvents.mockClear();
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(mocks.listLiveChatDeletionEvents).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(5000);
-    await vi.waitFor(() => expect(mocks.listLiveChatDeletionEvents).toHaveBeenCalledTimes(1));
-    await controller.stopBroadcast();
-    vi.useRealTimers();
-  });
-
-  test("paginates list reconcile on initial fetch", async () => {
-    mocks.listLiveChatDeletionEvents.mockImplementation(async (_liveChatId, options) => {
-      if (options?.paginateAll) {
-        return {
-          deletions: [
-            {
-              targetPlatformMessageId: "deleted-from-list",
-              deletionStatus: "deleted",
-              deletedAt: "2026-04-27T12:02:00.000Z"
-            }
-          ],
-          pollingIntervalMillis: 5000
-        };
-      }
-      return { deletions: [], pollingIntervalMillis: 5000 };
-    });
-    mocks.streamLiveChatMessages.mockImplementation(async function* () {
-      yield {
-        messages: [message("deleted-from-list")],
-        deletions: [],
-        nextPageToken: "token-1"
-      };
-      await new Promise(() => undefined);
-    });
-
-    const { AppController } = await import("@/server/state/appController");
-    const controller = new AppController();
-    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
-    await vi.waitFor(async () => {
-      const target = (await controller.getMessages()).find((item) => item.id === "deleted-from-list");
-      expect(target).toMatchObject({
-        messageText: "このコメントは削除されました。",
-        deletionStatus: "deleted"
-      });
-    });
-    expect(
-      mocks.listLiveChatDeletionEvents.mock.calls.some(([, options]) => options?.paginateAll === true)
-    ).toBe(true);
-    await controller.stopBroadcast();
-  });
-
-  test("backs off list reconcile after rateLimitExceeded without stopping the stream", async () => {
-    vi.useFakeTimers();
-    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
-    mocks.listLiveChatDeletionEvents
-      .mockResolvedValueOnce({ deletions: [], pollingIntervalMillis: 5000 })
-      .mockRejectedValueOnce({ classified: { kind: "rateLimitExceeded", message: "rate limited", retryable: true } });
-    mocks.classifyYouTubeError.mockImplementation((error: unknown) => {
-      const classified = (error as { classified?: unknown }).classified;
-      return classified ?? { kind: "unknown", message: "stream failed", retryable: false };
-    });
-    mocks.streamLiveChatMessages.mockImplementation(async function* () {
-      yield { messages: [message("live-msg")], deletions: [], nextPageToken: "token-1" };
-      await new Promise(() => undefined);
-    });
-
-    const { AppController } = await import("@/server/state/appController");
-    const controller = new AppController();
-    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
-    await vi.waitFor(() => expect(mocks.listLiveChatDeletionEvents).toHaveBeenCalledTimes(1));
-
-    mocks.listLiveChatDeletionEvents.mockClear();
-    await vi.advanceTimersByTimeAsync(5000);
-    await vi.waitFor(() => expect(mocks.listLiveChatDeletionEvents).toHaveBeenCalledTimes(1));
-    expect(warnSpy).toHaveBeenCalled();
-
-    mocks.listLiveChatDeletionEvents.mockClear();
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(mocks.listLiveChatDeletionEvents).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(5000);
-    await vi.waitFor(() => expect(mocks.listLiveChatDeletionEvents).toHaveBeenCalledTimes(1));
-    expect((await controller.getMessages()).find((item) => item.id === "live-msg")).toBeTruthy();
-    await controller.stopBroadcast();
-    warnSpy.mockRestore();
-    vi.useRealTimers();
   });
 
   test("marks newest message retracted when two author messages are within 2 seconds", async () => {
