@@ -1,19 +1,59 @@
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  clearLiveChatAuthorNameCache,
   JsonObjectStreamParser,
   YouTubeStreamParserError,
   YouTubeStreamTruncatedError,
   YouTubeStreamResponseShapeError,
   mapLiveChatMessage,
   mapLiveChatMessageDeletion,
-  parseLiveChatStreamResponses
+  parseLiveChatStreamResponses,
+  resolveLiveChatAuthorNames
 } from "@/server/youtube/api";
+import type { ChatMessage } from "@/types";
 
 async function* chunks(values: Array<Buffer | string>) {
   for (const value of values) {
     yield value;
   }
 }
+
+function chatMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    id: "message-1",
+    platformMessageId: "message-1",
+    authorName: "@viewer-id",
+    authorChannelId: "channel-1",
+    messageText: "hello",
+    messageType: "textMessageEvent",
+    isMember: false,
+    isModerator: false,
+    isOwner: false,
+    isSuperChat: false,
+    publishedAt: "2026-04-27T12:00:00.000Z",
+    ...overrides
+  };
+}
+
+function youtubeWithChannelItems(items: unknown[]) {
+  const list = vi.fn().mockResolvedValue({ data: { items } });
+  return {
+    youtube: { channels: { list } } as unknown as Parameters<typeof resolveLiveChatAuthorNames>[1],
+    list
+  };
+}
+
+function youtubeWithChannelError(error: Error) {
+  const list = vi.fn().mockRejectedValue(error);
+  return {
+    youtube: { channels: { list } } as unknown as Parameters<typeof resolveLiveChatAuthorNames>[1],
+    list
+  };
+}
+
+beforeEach(() => {
+  clearLiveChatAuthorNameCache();
+});
 
 describe("YouTube live chat stream parser", () => {
   test("parses split JSON responses", async () => {
@@ -244,5 +284,186 @@ describe("YouTube live chat stream parser", () => {
         // Exhaust the async iterator so parser errors surface in the assertion.
       }
     }).rejects.toThrow(YouTubeStreamResponseShapeError);
+  });
+});
+describe("YouTube live chat author name resolution", () => {
+  test("replaces handle-like live chat names with the channel title", async () => {
+    const { youtube, list } = youtubeWithChannelItems([
+      {
+        id: "channel-1",
+        snippet: {
+          title: "普通の表示名"
+        }
+      }
+    ]);
+
+    const resolved = await resolveLiveChatAuthorNames([chatMessage()], youtube);
+
+    expect(resolved[0].authorName).toBe("普通の表示名");
+    expect(resolved[0].messageText).toBe("hello");
+    expect(list).toHaveBeenCalledWith({
+      part: ["snippet"],
+      id: ["channel-1"],
+      maxResults: 1
+    });
+  });
+
+  test("prefers localized channel titles when YouTube returns them", async () => {
+    const { youtube } = youtubeWithChannelItems([
+      {
+        id: "channel-1",
+        snippet: {
+          title: "Default title",
+          localized: {
+            title: "日本語の表示名"
+          }
+        }
+      }
+    ]);
+
+    const resolved = await resolveLiveChatAuthorNames([chatMessage()], youtube);
+
+    expect(resolved[0].authorName).toBe("日本語の表示名");
+  });
+
+  test("caches channel titles so repeated viewers do not trigger repeated lookups", async () => {
+    const { youtube, list } = youtubeWithChannelItems([
+      {
+        id: "channel-1",
+        snippet: {
+          title: "キャッシュ済み視聴者"
+        }
+      }
+    ]);
+
+    const first = await resolveLiveChatAuthorNames([chatMessage()], youtube);
+    const second = await resolveLiveChatAuthorNames(
+      [chatMessage({ id: "message-2", platformMessageId: "message-2" })],
+      youtube
+    );
+
+    expect(first[0].authorName).toBe("キャッシュ済み視聴者");
+    expect(second[0].authorName).toBe("キャッシュ済み視聴者");
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  test("resolves already human-readable live chat names with the channel title", async () => {
+    const { youtube, list } = youtubeWithChannelItems([
+      {
+        id: "channel-1",
+        snippet: {
+          title: "チャンネルタイトル"
+        }
+      }
+    ]);
+
+    const resolved = await resolveLiveChatAuthorNames(
+      [chatMessage({ authorName: "ライブ表示名" })],
+      youtube
+    );
+
+    expect(resolved[0].authorName).toBe("チャンネルタイトル");
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  test("replaces channel-id author names with the channel title", async () => {
+    const channelId = "UCh10BohCIylcqYkeHeEgviA";
+    const { youtube, list } = youtubeWithChannelItems([
+      {
+        id: channelId,
+        snippet: {
+          title: "IDではない表示名"
+        }
+      }
+    ]);
+
+    const resolved = await resolveLiveChatAuthorNames(
+      [chatMessage({ authorName: channelId, authorChannelId: channelId })],
+      youtube
+    );
+
+    expect(resolved[0].authorName).toBe("IDではない表示名");
+    expect(list).toHaveBeenCalledWith({
+      part: ["snippet"],
+      id: [channelId],
+      maxResults: 1
+    });
+  });
+
+  test("hides id-like author names when the channel title cannot be resolved", async () => {
+    const channelId = "UCh10BohCIylcqYkeHeEgviA";
+    const { youtube, list } = youtubeWithChannelItems([]);
+
+    const resolved = await resolveLiveChatAuthorNames(
+      [chatMessage({ authorName: channelId, authorChannelId: channelId })],
+      youtube
+    );
+
+    expect(resolved[0].authorName).toBe("YouTube視聴者");
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  test("hides id-like author names when the channel title lookup fails", async () => {
+    const channelId = "UCh10BohCIylcqYkeHeEgviA";
+    const { youtube, list } = youtubeWithChannelError(new Error("quota exceeded"));
+
+    const resolved = await resolveLiveChatAuthorNames(
+      [chatMessage({ authorName: channelId, authorChannelId: channelId })],
+      youtube
+    );
+
+    expect(resolved[0].authorName).toBe("YouTube視聴者");
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps the original author name when the channel id is missing", async () => {
+    const { youtube, list } = youtubeWithChannelItems([
+      {
+        id: "channel-1",
+        snippet: {
+          title: "取得されない表示名"
+        }
+      }
+    ]);
+
+    const resolved = await resolveLiveChatAuthorNames(
+      [chatMessage({ authorName: "UCh10BohCIylcqYkeHeEgviA", authorChannelId: undefined })],
+      youtube
+    );
+
+    expect(resolved[0].authorName).toBe("UCh10BohCIylcqYkeHeEgviA");
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  test("batches uncached channel title lookups in groups of fifty", async () => {
+    const list = vi.fn().mockResolvedValue({ data: { items: [] } });
+    const youtube = {
+      channels: { list }
+    } as unknown as Parameters<typeof resolveLiveChatAuthorNames>[1];
+    const messages = Array.from({ length: 51 }, (_, index) =>
+      chatMessage({
+        id: `message-${index}`,
+        platformMessageId: `message-${index}`,
+        authorChannelId: `channel-${index}`
+      })
+    );
+
+    await resolveLiveChatAuthorNames(messages, youtube);
+
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(list).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        id: Array.from({ length: 50 }, (_, index) => `channel-${index}`),
+        maxResults: 50
+      })
+    );
+    expect(list).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        id: ["channel-50"],
+        maxResults: 1
+      })
+    );
   });
 });
