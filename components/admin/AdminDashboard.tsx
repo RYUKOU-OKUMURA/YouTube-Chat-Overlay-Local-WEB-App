@@ -6,6 +6,7 @@ import { BadgeJapaneseYen, Copy, MonitorCog, RefreshCcw, SlidersHorizontal, Test
 import type { AppState, BroadcastStatus, ChatMessage, Settings, Theme, YouTubeStatus } from "@/types";
 import { socketEvents } from "@/types";
 import { isImportantMessage, maxRetainedSuperChats, prioritizeRetainedMessages } from "@/lib/messageRetention";
+import { buildOverlayUrl } from "@/lib/overlayUrl";
 import { Button } from "@/components/common/Button";
 import { Panel } from "@/components/common/Panel";
 import { fetchJson } from "./api";
@@ -299,7 +300,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
 
   function overlayUrl() {
     if (!state) return "";
-    return new URL("/overlay", window.location.origin).toString();
+    return buildOverlayUrl(window.location.origin);
   }
 
   async function patchSettings(patch: SettingsPatch) {
@@ -537,6 +538,8 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
                 youtubeStatus={state.youtubeStatus}
                 broadcastStatus={state.broadcastStatus}
                 lastSyncLabel={lastSyncLabel}
+                overlayUrl={overlayUrl()}
+                onCopyOverlayUrl={copyOverlayUrl}
                 onRefresh={syncStatus}
               />
             </div>

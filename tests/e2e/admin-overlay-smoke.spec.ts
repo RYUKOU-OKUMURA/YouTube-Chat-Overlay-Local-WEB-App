@@ -10,6 +10,8 @@ test.describe("admin/overlay smoke", () => {
   test("opens admin and overlay and exercises the test-comment flow", async ({ context, page }) => {
     await page.goto("/admin");
     await expect(page.getByRole("heading", { name: /YouTubeコメントオーバーレイ管理/i })).toBeVisible();
+    await expect(page.getByText("OBS Browser Source URL")).toBeVisible();
+    await expect(page.getByText("初回だけ OBS に設定すれば、以降 URL の変更は不要です。")).toBeVisible();
     await expect(page.getByRole("heading", { name: "YouTube映像プレビュー" })).toBeVisible();
     await expect(page.getByText("管理・設定で配信URLを開始するとここにプレビュー表示")).toBeVisible();
     await expect(page.getByRole("heading", { name: "配信メトリクス" })).toBeVisible();
