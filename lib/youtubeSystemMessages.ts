@@ -21,7 +21,9 @@ const youtubeSystemRetractedMessagePatterns = [
 export function isYoutubeSystemDeletedMessage(messageText: string) {
   const normalized = messageText.trim();
   if (!normalized) {
-    return true;
+    // Empty text is not a deletion placeholder; treating it as one would
+    // mark unrelated recent messages from the same author as deleted.
+    return false;
   }
   return youtubeSystemDeletedMessagePatterns.some((pattern) => pattern.test(normalized));
 }

@@ -4,6 +4,7 @@
  */
 import { describe, expect, test } from "vitest";
 import {
+  collectDeletionEventsFromListItems,
   deletionMergeKey,
   isYoutubeSystemRetractedMessage,
   mapLiveChatMessage,
@@ -264,6 +265,104 @@ describe("deletion investigation — payload gaps", () => {
     expect(second.messages).toHaveLength(1);
     expect(second.messages[0].messageText).toBe("[Message deleted]");
     expect(second.deletions).toEqual([]);
+  });
+});
+
+describe("deletion investigation — list snapshot reconciliation", () => {
+  test("maps a retract placeholder with a fresh LCC id to an author-anchor retraction", () => {
+    // Real payload shape from the 2026-05-19 live session: the placeholder
+    // arrives in the list window under its own LCC.* id, not the original's.
+    expect(
+      collectDeletionEventsFromListItems([
+        {
+          id: "LCC.placeholder-id",
+          snippet: {
+            type: "textMessageEvent",
+            publishedAt: "2026-05-19T09:49:38.659Z",
+            displayMessage: "メッセージが撤回されました"
+          },
+          authorDetails: { displayName: "Viewer", channelId: "channel-1" }
+        }
+      ])
+    ).toEqual([
+      {
+        targetAuthorChannelId: "channel-1",
+        authorRetractionAnchor: "2026-05-19T09:49:38.659Z",
+        deletionStatus: "retracted",
+        deletedAt: "2026-05-19T09:49:38.659Z"
+      }
+    ]);
+  });
+
+  test("maps tombstones and snake_case deletion events from the list window", () => {
+    expect(
+      collectDeletionEventsFromListItems([
+        {
+          id: "original-msg-id",
+          snippet: {
+            type: "tombstone",
+            publishedAt: "2026-05-19T09:50:00.000Z"
+          }
+        },
+        {
+          id: "delete-event-id",
+          snippet: {
+            type: "messageDeletedEvent",
+            published_at: "2026-05-19T09:51:00.000Z",
+            message_deleted_details: { deleted_message_id: "another-msg-id" }
+          }
+        }
+      ])
+    ).toEqual([
+      {
+        targetPlatformMessageId: "original-msg-id",
+        deletionStatus: "deleted",
+        deletedAt: "2026-05-19T09:50:00.000Z"
+      },
+      {
+        targetPlatformMessageId: "another-msg-id",
+        deletionStatus: "deleted",
+        deletedAt: "2026-05-19T09:51:00.000Z"
+      }
+    ]);
+  });
+
+  test("dedupes repeated placeholders for the same anchor and keeps normal messages out", () => {
+    const placeholder = {
+      id: "LCC.placeholder-id",
+      snippet: {
+        type: "textMessageEvent",
+        publishedAt: "2026-05-19T09:49:38.659Z",
+        displayMessage: "メッセージが撤回されました"
+      },
+      authorDetails: { displayName: "Viewer", channelId: "channel-1" }
+    };
+    const normalMessage = {
+      id: "LCC.normal-id",
+      snippet: {
+        type: "textMessageEvent",
+        publishedAt: "2026-05-19T09:49:40.000Z",
+        displayMessage: "こんにちは"
+      },
+      authorDetails: { displayName: "Viewer", channelId: "channel-2" }
+    };
+
+    expect(collectDeletionEventsFromListItems([placeholder, placeholder, normalMessage])).toHaveLength(1);
+  });
+
+  test("does not turn empty-text messages into deletion placeholders", () => {
+    expect(
+      collectDeletionEventsFromListItems([
+        {
+          id: "LCC.empty-id",
+          snippet: {
+            type: "superStickerEvent",
+            publishedAt: "2026-05-19T09:49:38.659Z"
+          },
+          authorDetails: { displayName: "Viewer", channelId: "channel-1" }
+        }
+      ])
+    ).toEqual([]);
   });
 });
 
@@ -720,5 +819,96 @@ describe("deletion investigation — appController matching", () => {
       messageText: "このコメントは削除されました。",
       deletionStatus: "deleted"
     });
+  });
+
+  test("re-applying the same reconcile retraction stays idempotent without re-queueing pending", async () => {
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    await controller.init();
+    const ingest = bindPrivateIngestMessages(controller);
+    const applyDeletions = bindPrivateApplyMessageDeletions(controller);
+    const pendingDeletions = (controller as unknown as { pendingMessageDeletions: Map<string, unknown> })
+      .pendingMessageDeletions;
+    const updates: string[] = [];
+    controller.events.on("comment:update", (message) => {
+      updates.push(message.platformMessageId);
+    });
+
+    ingest([
+      {
+        id: "original-msg",
+        platformMessageId: "original-msg",
+        authorName: "Viewer",
+        authorChannelId: "channel-1",
+        messageText: "hello",
+        messageType: "textMessageEvent",
+        isMember: false,
+        isModerator: false,
+        isOwner: false,
+        isSuperChat: false,
+        publishedAt: "2026-05-19T09:49:00.000Z"
+      }
+    ]);
+
+    const reconcileDeletion = {
+      targetAuthorChannelId: "channel-1",
+      authorRetractionAnchor: "2026-05-19T09:49:38.659Z",
+      deletionStatus: "retracted",
+      deletedAt: "2026-05-19T09:49:38.659Z"
+    };
+
+    applyDeletions([reconcileDeletion]);
+    expect((await controller.getMessages())[0]).toMatchObject({ deletionStatus: "retracted" });
+    expect(updates).toEqual(["original-msg"]);
+
+    applyDeletions([reconcileDeletion]);
+    expect(updates).toEqual(["original-msg"]);
+    expect(pendingDeletions.size).toBe(0);
+  });
+
+  test("ingests empty-text messages without retracting the author's previous comment", async () => {
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    await controller.init();
+    const ingest = bindPrivateIngestMessages(controller);
+
+    ingest([
+      {
+        id: "original-msg",
+        platformMessageId: "original-msg",
+        authorName: "Viewer",
+        authorChannelId: "channel-1",
+        messageText: "hello",
+        messageType: "textMessageEvent",
+        isMember: false,
+        isModerator: false,
+        isOwner: false,
+        isSuperChat: false,
+        publishedAt: "2026-05-19T09:49:00.000Z"
+      }
+    ]);
+
+    ingest([
+      {
+        id: "empty-msg",
+        platformMessageId: "empty-msg",
+        authorName: "Viewer",
+        authorChannelId: "channel-1",
+        messageText: "",
+        messageType: "superStickerEvent",
+        isMember: false,
+        isModerator: false,
+        isOwner: false,
+        isSuperChat: true,
+        publishedAt: "2026-05-19T09:50:00.000Z"
+      }
+    ]);
+
+    const messages = await controller.getMessages();
+    expect(messages.find((item) => item.platformMessageId === "original-msg")).not.toHaveProperty("deletionStatus");
+    expect(messages.find((item) => item.platformMessageId === "original-msg")).toMatchObject({
+      messageText: "hello"
+    });
+    expect(messages.some((item) => item.platformMessageId === "empty-msg")).toBe(true);
   });
 });

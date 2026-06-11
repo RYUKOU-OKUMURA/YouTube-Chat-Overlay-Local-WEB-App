@@ -5,8 +5,10 @@ import type { youtube_v3 } from "googleapis";
 import { getAuthorizedClient } from "@/server/youtube/oauth";
 import { logger } from "@/lib/logger";
 import {
+  deletionKey,
   isDeletionEventType,
   mapLiveChatMessageDeletion,
+  mapRemovalPlaceholderDeletion,
   readPollingIntervalMillis,
   type LiveChatMessageDeletion
 } from "@/server/youtube/deletions";
@@ -427,6 +429,39 @@ export async function* streamLiveChatMessages({
       pollingIntervalMillis: readPollingIntervalMillis(normalized)
     };
   }
+}
+
+/**
+ * Extracts deletion/retraction signals from a liveChatMessages.list snapshot.
+ * The stream endpoint never pushes retractions for an ongoing connection, so the
+ * recent-history window is the only place placeholders and tombstones show up.
+ */
+export function collectDeletionEventsFromListItems(rawItems: unknown[]): LiveChatMessageDeletion[] {
+  const items = rawItems.map((item) => normalizeStreamMessage(item));
+  const { messages, deletions } = mapLiveChatStreamItems(items);
+  const placeholderDeletions = messages
+    .map((message) => mapRemovalPlaceholderDeletion(message))
+    .filter((deletion): deletion is LiveChatMessageDeletion => deletion !== null);
+
+  const merged = new Map<string, LiveChatMessageDeletion>();
+  for (const deletion of [...deletions, ...placeholderDeletions]) {
+    const key = deletionKey(deletion);
+    if (key) {
+      merged.set(key, deletion);
+    }
+  }
+  return [...merged.values()];
+}
+
+export async function listLiveChatDeletionEvents(liveChatId: string) {
+  const auth = await getAuthorizedClient();
+  const youtube = google.youtube({ version: "v3", auth });
+  const response = await youtube.liveChatMessages.list({
+    liveChatId,
+    part: ["id", "snippet", "authorDetails"],
+    maxResults: 200
+  });
+  return collectDeletionEventsFromListItems(response.data.items ?? []);
 }
 
 export async function* parseLiveChatStreamResponses(

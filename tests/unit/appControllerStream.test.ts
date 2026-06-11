@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getActiveLiveBroadcastInfo: vi.fn(),
   getLiveChatInfo: vi.fn(),
   getViewerMetrics: vi.fn(),
+  listLiveChatDeletionEvents: vi.fn(),
   streamLiveChatMessages: vi.fn(),
   classifyYouTubeError: vi.fn(),
   readSettings: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("@/server/youtube/api", () => ({
   getActiveLiveBroadcastInfo: mocks.getActiveLiveBroadcastInfo,
   getLiveChatInfo: mocks.getLiveChatInfo,
   getViewerMetrics: mocks.getViewerMetrics,
+  listLiveChatDeletionEvents: mocks.listLiveChatDeletionEvents,
   streamLiveChatMessages: mocks.streamLiveChatMessages,
   classifyYouTubeError: mocks.classifyYouTubeError
 }));
@@ -83,6 +85,7 @@ describe("AppController stream lifecycle", () => {
       checkedAt: "2026-04-27T12:03:00.000Z",
       status: "available"
     });
+    mocks.listLiveChatDeletionEvents.mockResolvedValue([]);
     mocks.classifyYouTubeError.mockImplementation((error: unknown) => {
       const classified = (error as { classified?: unknown }).classified;
       return classified ?? { kind: "unknown", message: "stream failed", retryable: false };
@@ -977,6 +980,44 @@ describe("AppController stream lifecycle", () => {
         deletionStatus: "retracted"
       });
       expect(messages.find((item) => item.id === "older-msg")?.deletionStatus).toBeUndefined();
+    });
+    await controller.stopBroadcast();
+  });
+
+  test("applies retractions discovered by the list reconcile to streamed messages", async () => {
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      yield {
+        messages: [
+          message("original-msg", {
+            authorChannelId: "channel-1",
+            messageText: "hello",
+            publishedAt: "2026-04-27T12:00:00.000Z"
+          })
+        ],
+        deletions: [],
+        nextPageToken: "token-1"
+      };
+      await new Promise(() => undefined);
+    });
+    mocks.listLiveChatDeletionEvents.mockResolvedValue([
+      {
+        targetAuthorChannelId: "channel-1",
+        authorRetractionAnchor: "2026-04-27T12:01:00.000Z",
+        deletionStatus: "retracted",
+        deletedAt: "2026-04-27T12:01:00.000Z"
+      }
+    ]);
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => {
+      expect(mocks.listLiveChatDeletionEvents).toHaveBeenCalledWith("live-chat-1");
+      const messages = await controller.getMessages();
+      expect(messages.find((item) => item.id === "original-msg")).toMatchObject({
+        deletionStatus: "retracted",
+        messageText: "このコメントは投稿者により取り消されました。"
+      });
     });
     await controller.stopBroadcast();
   });

@@ -4,6 +4,7 @@ import {
   getActiveLiveBroadcastInfo,
   getLiveChatInfo,
   getViewerMetrics,
+  listLiveChatDeletionEvents,
   streamLiveChatMessages,
   type LiveChatInfo,
   type ClassifiedYouTubeError
@@ -68,6 +69,9 @@ class TypedEmitter extends EventEmitter {
 
 const viewerMetricsIntervalSeconds = 180;
 const viewerMetricsIntervalMs = viewerMetricsIntervalSeconds * 1000;
+// Retractions never arrive over the stream connection; a periodic list snapshot
+// is the only way to detect them. 60s keeps quota usage predictable.
+const deletionReconcileIntervalMs = 60_000;
 const initialReconnectDelayMs = 2000;
 const maxReconnectDelayMs = 60000;
 const maxReconnectAttempts = 8;
@@ -172,6 +176,8 @@ export class AppController {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private viewerMetricsTimer: NodeJS.Timeout | null = null;
   private viewerMetricsRefreshInFlight: Promise<BroadcastStatus> | null = null;
+  private deletionReconcileTimer: NodeJS.Timeout | null = null;
+  private deletionReconcileInFlight = false;
   private streamGeneration = 0;
   private startRequestGeneration = 0;
   private startQueue: Promise<unknown> = Promise.resolve();
@@ -397,6 +403,7 @@ export class AppController {
     this.events.emit("broadcast:status", this.broadcastStatus);
     await this.emitSync();
     this.scheduleViewerMetricsRefresh(generation);
+    this.scheduleDeletionReconcile(info.liveChatId, generation);
     void this.consumeLiveChatStream(generation);
     return this.broadcastStatus;
   }
@@ -676,6 +683,7 @@ export class AppController {
         if (ended) {
           this.clearCurrentAbortController(abortController);
           this.clearViewerMetricsTimer();
+          this.clearDeletionReconcileTimer();
           this.broadcastStatus = {
             ...this.broadcastStatus,
             viewerMetrics: this.broadcastStatus.viewerMetrics
@@ -966,6 +974,14 @@ export class AppController {
         deletionStatus: resolvedDeletion.deletionStatus,
         deletedAt: resolvedDeletion.deletedAt
       });
+
+      // List snapshots re-deliver the same placeholders every cycle; once the
+      // target already carries the status there is nothing left to apply.
+      const stored = this.findStoredMessage(resolvedDeletion.targetPlatformMessageId);
+      if (stored?.deletionStatus === resolvedDeletion.deletionStatus) {
+        this.clearPendingDeletionKeys(deletion, resolvedDeletion);
+        return;
+      }
     }
 
     const queued = this.queuePendingMessageDeletion(deletion);
@@ -1140,6 +1156,7 @@ export class AppController {
     this.streamGeneration += 1;
     this.reconnectDelayMs = initialReconnectDelayMs;
     this.clearViewerMetricsTimer();
+    this.clearDeletionReconcileTimer();
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -1174,6 +1191,61 @@ export class AppController {
     if (this.viewerMetricsTimer) {
       clearTimeout(this.viewerMetricsTimer);
       this.viewerMetricsTimer = null;
+    }
+  }
+
+  private scheduleDeletionReconcile(liveChatId: string, generation: number) {
+    this.clearDeletionReconcileTimer();
+    if (!this.isCurrentStream(generation) || !liveChatId) {
+      return;
+    }
+
+    const scheduleNext = () => {
+      if (!this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments) {
+        return;
+      }
+
+      this.deletionReconcileTimer = setTimeout(() => {
+        this.deletionReconcileTimer = null;
+        void this.reconcileDeletionsFromList(liveChatId, generation).then(() => {
+          scheduleNext();
+        });
+      }, deletionReconcileIntervalMs);
+    };
+
+    void this.reconcileDeletionsFromList(liveChatId, generation).then(() => {
+      scheduleNext();
+    });
+  }
+
+  private clearDeletionReconcileTimer() {
+    if (this.deletionReconcileTimer) {
+      clearTimeout(this.deletionReconcileTimer);
+      this.deletionReconcileTimer = null;
+    }
+  }
+
+  private async reconcileDeletionsFromList(liveChatId: string, generation: number) {
+    if (this.deletionReconcileInFlight || !this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments) {
+      return;
+    }
+
+    this.deletionReconcileInFlight = true;
+    try {
+      const deletions = await listLiveChatDeletionEvents(liveChatId);
+      if (deletions.length > 0 && this.isCurrentStream(generation)) {
+        this.applyMessageDeletions(deletions);
+      }
+    } catch (error) {
+      logger.warn(
+        {
+          liveChatId,
+          error: error instanceof Error ? error.message : String(error)
+        },
+        "Failed to reconcile YouTube deletion events from liveChatMessages.list."
+      );
+    } finally {
+      this.deletionReconcileInFlight = false;
     }
   }
 
