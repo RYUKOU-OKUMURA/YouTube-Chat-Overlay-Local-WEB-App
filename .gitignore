@@ -10,3 +10,5 @@ playwright-report/
 data/settings.json
 data/youtube-token.json
 *.tsbuildinfo
+.cursor/
+.playwright-mcp/

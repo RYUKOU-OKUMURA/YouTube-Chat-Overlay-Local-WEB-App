@@ -5,7 +5,6 @@
 import { describe, expect, test } from "vitest";
 import {
   collectDeletionEventsFromListItems,
-  deletionMergeKey,
   isYoutubeSystemRetractedMessage,
   mapLiveChatMessage,
   mapLiveChatMessageDeletion,
@@ -13,6 +12,7 @@ import {
   mapRemovalPlaceholderDeletion,
   parseLiveChatStreamResponses
 } from "@/server/youtube/api";
+import { deletionKey } from "@/server/youtube/deletions";
 import type { ChatMessage } from "@/types";
 
 function bindPrivateIngestMessages(controller: unknown) {
@@ -26,7 +26,7 @@ function bindPrivateApplyMessageDeletions(controller: unknown) {
 }
 
 describe("deletion investigation — payload gaps", () => {
-  test("deletionMergeKey keeps distinct anchor-based retractions from the same author", () => {
+  test("deletionKey keeps distinct anchor-based retractions from the same author", () => {
     const first = {
       targetAuthorChannelId: "channel-1",
       authorRetractionAnchor: "2026-04-27T12:01:00.000Z",
@@ -40,11 +40,11 @@ describe("deletion investigation — payload gaps", () => {
       deletedAt: "2026-04-27T12:05:00.000Z"
     };
 
-    expect(deletionMergeKey(first)).not.toBe(deletionMergeKey(second));
+    expect(deletionKey(first)).not.toBe(deletionKey(second));
 
     const merged = new Map<string, (typeof first)>();
     for (const deletion of [first, second]) {
-      const key = deletionMergeKey(deletion);
+      const key = deletionKey(deletion);
       if (key) {
         merged.set(key, deletion);
       }

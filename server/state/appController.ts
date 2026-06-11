@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import {
   classifyYouTubeError,
   getActiveLiveBroadcastInfo,
@@ -20,6 +19,25 @@ import {
   resolveDeletionTarget,
   type LiveChatMessageDeletion
 } from "@/server/youtube/deletions";
+import { TypedEmitter } from "@/server/state/appEvents";
+import {
+  broadcastErrorFields,
+  buildYouTubeWatchUrl,
+  clearBroadcastErrorFields,
+  initialReconnectDelayMs,
+  maxReconnectAttempts,
+  maxReconnectDelayMs,
+  maxShortStreamCloses,
+  shortStreamCloseMs,
+  terminalConnectionState
+} from "@/server/state/broadcastStatusFields";
+import {
+  idleViewerMetrics,
+  nextViewerMetricsRefreshAt,
+  viewerMetricsFromValue,
+  viewerMetricsIntervalMs,
+  viewerMetricsIntervalSeconds
+} from "@/server/state/viewerMetricsHelpers";
 import { parseYouTubeVideoId } from "@/server/youtube/parseYouTubeUrl";
 import { getYouTubeStatus } from "@/server/youtube/oauth";
 import { patchSettings, readSettings } from "@/server/settings/settingsStore";
@@ -40,124 +58,13 @@ import type {
   Settings,
   StartBroadcastInput,
   TestMessageInput,
-  ViewerMetrics,
   YouTubeStatus
 } from "@/types";
 
-type AppEvents = {
-  "state:sync": [AppState];
-  "comment:new": [ChatMessage];
-  "comment:update": [ChatMessage];
-  "youtube:status": [YouTubeStatus];
-  "broadcast:status": [BroadcastStatus];
-  "overlay:show": [OverlayState];
-  "overlay:hide": [OverlayState];
-  "overlay:test": [OverlayState];
-  "overlay:theme:update": [Settings];
-  "overlay:connected": [{ connected: boolean; connectedAt?: string }];
-};
-
-class TypedEmitter extends EventEmitter {
-  emit<K extends keyof AppEvents>(eventName: K, ...args: AppEvents[K]): boolean {
-    return super.emit(eventName, ...args);
-  }
-
-  on<K extends keyof AppEvents>(eventName: K, listener: (...args: AppEvents[K]) => void): this {
-    return super.on(eventName, listener);
-  }
-}
-
-const viewerMetricsIntervalSeconds = 180;
-const viewerMetricsIntervalMs = viewerMetricsIntervalSeconds * 1000;
 // Retractions never arrive over the stream connection; a periodic list snapshot
 // is the only way to detect them. 60s keeps quota usage predictable.
 const deletionReconcileIntervalMs = 60_000;
-const initialReconnectDelayMs = 2000;
-const maxReconnectDelayMs = 60000;
-const maxReconnectAttempts = 8;
-const maxShortStreamCloses = 5;
-const shortStreamCloseMs = 5000;
 const autoDetectStartKey = "__auto_detect_current_live__";
-
-function clearBroadcastErrorFields(): Partial<BroadcastStatus> {
-  return {
-    error: undefined,
-    errorKind: undefined,
-    errorReason: undefined,
-    errorPhase: undefined,
-    errorAction: undefined
-  };
-}
-
-function broadcastErrorFields(
-  error: ClassifiedYouTubeError,
-  fallbackPhase: NonNullable<BroadcastStatus["errorPhase"]>
-): Partial<BroadcastStatus> {
-  const fields: Partial<BroadcastStatus> = {
-    error: error.message,
-    errorKind: error.kind,
-    errorReason: error.reason,
-    errorPhase: error.phase ?? fallbackPhase,
-    errorAction: error.action
-  };
-  if (error.scheduledStartTime) {
-    fields.scheduledStartTime = error.scheduledStartTime;
-  }
-  if (error.actualStartTime) {
-    fields.actualStartTime = error.actualStartTime;
-  }
-  if (error.actualEndTime) {
-    fields.actualEndTime = error.actualEndTime;
-  }
-  return fields;
-}
-
-function terminalConnectionState(error: ClassifiedYouTubeError): BroadcastStatus["connectionState"] {
-  return error.kind === "liveChatEnded" || error.kind === "liveEnded" ? "ended" : "error";
-}
-
-function idleViewerMetrics(): ViewerMetrics {
-  return {
-    intervalSeconds: viewerMetricsIntervalSeconds,
-    status: "idle"
-  };
-}
-
-function nextViewerMetricsRefreshAt(from = Date.now()) {
-  return new Date(from + viewerMetricsIntervalMs).toISOString();
-}
-
-function viewerMetricsFromValue({
-  concurrentViewers,
-  checkedAt,
-  nextRefreshAt
-}: {
-  concurrentViewers?: number;
-  checkedAt: string;
-  nextRefreshAt?: string;
-}): ViewerMetrics {
-  if (typeof concurrentViewers === "number") {
-    return {
-      concurrentViewers,
-      checkedAt,
-      nextRefreshAt,
-      intervalSeconds: viewerMetricsIntervalSeconds,
-      status: "available"
-    };
-  }
-
-  return {
-    checkedAt,
-    nextRefreshAt,
-    intervalSeconds: viewerMetricsIntervalSeconds,
-    status: "unavailable",
-    message: "視聴者数非表示または取得不可"
-  };
-}
-
-function buildYouTubeWatchUrl(videoId: string) {
-  return `https://www.youtube.com/watch?v=${videoId}`;
-}
 
 export class AppController {
   readonly events = new TypedEmitter();
@@ -212,7 +119,6 @@ export class AppController {
   async getState(): Promise<AppState> {
     await this.init();
     return {
-      overlayToken: this.settings.overlayToken,
       messages: this.messages,
       superChats: this.superChats,
       overlay: this.overlayState,
@@ -309,7 +215,7 @@ export class AppController {
         info = await getActiveLiveBroadcastInfo();
       } catch (error) {
         if (requestGeneration === this.startRequestGeneration) {
-          await this.publishDetectionFailure(classifyYouTubeError(error));
+          await this.publishStartFailure(classifyYouTubeError(error));
         }
         throw error;
       }
@@ -351,7 +257,7 @@ export class AppController {
         info = await getLiveChatInfo(videoId);
       } catch (error) {
         if (requestGeneration === this.startRequestGeneration && this.canPublishStartFailure(videoId)) {
-          await this.publishStartFailure(input.broadcastUrl, videoId, classifyYouTubeError(error));
+          await this.publishStartFailure(classifyYouTubeError(error), { broadcastUrl: input.broadcastUrl, videoId });
         }
         throw error;
       }
@@ -605,7 +511,7 @@ export class AppController {
     return !this.broadcastStatus.isFetchingComments || this.broadcastStatus.currentVideoId === videoId;
   }
 
-  private async publishStartFailure(broadcastUrl: string, videoId: string, error: ClassifiedYouTubeError) {
+  private async publishStartFailure(error: ClassifiedYouTubeError, target?: { broadcastUrl: string; videoId: string }) {
     this.resetActiveStream();
     this.broadcastStatus = {
       isFetchingComments: false,
@@ -614,24 +520,7 @@ export class AppController {
       reconnectAttempt: 0,
       maxReconnectAttempts,
       nextReconnectAt: undefined,
-      currentBroadcastUrl: broadcastUrl,
-      currentVideoId: videoId,
-      viewerMetrics: idleViewerMetrics(),
-      ...broadcastErrorFields(error, "liveChatInfo")
-    };
-    this.events.emit("broadcast:status", this.broadcastStatus);
-    await this.emitSync();
-  }
-
-  private async publishDetectionFailure(error: ClassifiedYouTubeError) {
-    this.resetActiveStream();
-    this.broadcastStatus = {
-      isFetchingComments: false,
-      connectionMode: "stream",
-      connectionState: terminalConnectionState(error),
-      reconnectAttempt: 0,
-      maxReconnectAttempts,
-      nextReconnectAt: undefined,
+      ...(target ? { currentBroadcastUrl: target.broadcastUrl, currentVideoId: target.videoId } : {}),
       viewerMetrics: idleViewerMetrics(),
       ...broadcastErrorFields(error, "liveChatInfo")
     };

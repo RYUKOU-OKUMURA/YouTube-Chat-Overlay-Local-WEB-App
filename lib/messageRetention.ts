@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@/types";
 
-export const maxRetainedMessages = 300;
+const maxRetainedMessages = 300;
 export const maxRetainedSuperChats = 100;
 export const maxFetchedMessageIds = 1000;
 

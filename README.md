@@ -132,7 +132,6 @@ YouTube ライブ映像プレビューは管理画面の操作画面だけに表
 Git 管理しないローカルファイル:
 
 - `data/settings.json`
-  - `overlayToken`
   - `theme`
   - `lastBroadcastUrl`
 - `data/youtube-token.json`
@@ -152,32 +151,14 @@ npm run build
 npm run test:e2e
 ```
 
-現状の TypeScript 6.x では `baseUrl` の deprecation により `npx tsc --noEmit` が失敗する場合があります。その場合は暫定確認として次を使えます。
-
-```bash
-npx tsc --noEmit --ignoreDeprecations 6.0
-```
-
 macOS の sandbox や CI 環境によっては Playwright Chromium が起動できない、またはアニメーション待ちで E2E がフレークする場合があります。その場合は失敗内容を記録し、unit/type/build の結果と合わせて判断してください。
-
-2026-05-08 時点の確認:
-
-- `npm test`: 12 files / 90 tests passed
-- `npx tsc --noEmit --ignoreDeprecations 6.0`: passed
-- `npm run build`: passed
-- `git diff --check`: passed
-- Playwright smoke: `comic-pop` と Super Chat の overlay 表示を確認
-- `npm run lint`: 現在の環境では `eslint: command not found` で実行不可
 
 ## Known Limitations
 
 - 管理画面、API、Socket.IO に認証はありません。ローカル専用です。
 - OAuth `state` 検証は未実装です。
 - YouTube独自絵文字の画像表示には未対応です。
-- 依存バージョンは `latest` 指定が多く、再現性の固定化は今後の改善対象です。
 
 ## Documents
 
-- 要件定義: `docs-md-staging/requirements.md`
-- 技術スタック: `docs-md-staging/tech-stack.md`
-- 現状リスク: `docs-md-staging/current-risks-and-mitigations.md`
+- 削除・取消コメント処理の設計メモ: `docs/deletion-handling-notes.md`

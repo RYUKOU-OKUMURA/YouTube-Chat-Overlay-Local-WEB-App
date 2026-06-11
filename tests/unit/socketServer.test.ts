@@ -42,7 +42,6 @@ function makeOverlayState(overrides: Partial<OverlayState> = {}): OverlayState {
 
 function makeAppState(overrides: Partial<AppState> = {}): AppState {
   return {
-    overlayToken: "overlay-token",
     messages: [baseMessage],
     superChats: [],
     overlay: makeOverlayState(),
@@ -141,7 +140,7 @@ async function subscribeOverlay(baseUrl: string) {
   const client = connectClient(baseUrl);
   await waitForConnect(client);
   const syncPromise = onceSocketEvent<OverlayState>(client, socketEvents.overlaySync);
-  client.emit(socketEvents.overlaySubscribe, { overlayToken: currentState.overlayToken });
+  client.emit(socketEvents.overlaySubscribe);
   await syncPromise;
   return client;
 }
@@ -180,20 +179,19 @@ describe("socket server role-aware sync", () => {
     });
 
     const syncPromise = onceSocketEvent<OverlayState>(overlayClient, socketEvents.overlaySync);
-    overlayClient.emit(socketEvents.overlaySubscribe, { overlayToken: currentState.overlayToken });
+    overlayClient.emit(socketEvents.overlaySubscribe);
     const syncPayload = await syncPromise;
 
     expect(syncPayload).toEqual(currentState.overlay);
     expect(syncPayload).not.toHaveProperty("messages");
     expect(syncPayload).not.toHaveProperty("youtubeStatus");
     expect(syncPayload).not.toHaveProperty("broadcastStatus");
-    expect(syncPayload).not.toHaveProperty("overlayToken");
     await delay(30);
     expect(leakedStateSync).toBeUndefined();
     expect(appController.setOverlayConnected).toHaveBeenCalledWith(true);
   });
 
-  test("lets fixed /overlay clients subscribe without exposing the token in the URL", async () => {
+  test("lets fixed /overlay clients subscribe with a bare subscribe event", async () => {
     const baseUrl = await startSocketServer();
     const overlayClient = connectClient(baseUrl);
     await waitForConnect(overlayClient);
@@ -295,7 +293,6 @@ describe("socket server role-aware sync", () => {
 
     const nextTheme = { ...defaultTheme, accentColor: "#22c55e" };
     const settings: Settings = {
-      overlayToken: "do-not-leak-token",
       theme: nextTheme,
       lastBroadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     };
@@ -305,7 +302,6 @@ describe("socket server role-aware sync", () => {
 
     const themePayload = await themePromise;
     expect(themePayload).toEqual({ theme: nextTheme });
-    expect(themePayload).not.toHaveProperty("overlayToken");
     expect(themePayload).not.toHaveProperty("lastBroadcastUrl");
     await delay(30);
     expect(adminThemePayload).toBeUndefined();

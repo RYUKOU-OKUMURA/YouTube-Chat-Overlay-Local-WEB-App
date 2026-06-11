@@ -29,12 +29,8 @@ type ServerToClientEvents = {
 };
 
 type ClientToServerEvents = {
-  [socketEvents.overlaySubscribe]: (payload?: { overlayToken?: string }) => void;
+  [socketEvents.overlaySubscribe]: () => void;
   [socketEvents.requestSync]: () => void;
-};
-
-type OverlayClientProps = {
-  overlayToken?: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -138,6 +134,58 @@ function useViewportSize() {
   }, []);
 
   return size;
+}
+
+type CardMotionTuning = {
+  hiddenY: number;
+  scaleHiddenY: number;
+  hiddenScale: number;
+  exitY: number;
+  scaleExitY: number;
+  springDuration: number;
+  bounce: number;
+  damping: number;
+  stiffness: number;
+};
+
+function cardMotion(animationType: Theme["animationType"], reducedMotion: boolean, tuning: CardMotionTuning) {
+  if (reducedMotion) {
+    return {
+      variants: {
+        hidden: { opacity: 0 },
+        visible: { opacity: 1 },
+        exit: { opacity: 0 }
+      },
+      transition: { type: "tween", duration: 0.01 } as const
+    };
+  }
+
+  return {
+    variants: {
+      hidden: {
+        opacity: 0,
+        y: animationType === "fade" ? 0 : animationType === "scale" ? tuning.scaleHiddenY : tuning.hiddenY,
+        scale: animationType === "scale" ? tuning.hiddenScale : 1
+      },
+      visible: {
+        opacity: 1,
+        y: 0,
+        scale: 1
+      },
+      exit: {
+        opacity: 0,
+        y: animationType === "fade" ? 0 : animationType === "scale" ? tuning.scaleExitY : tuning.exitY,
+        scale: animationType === "scale" ? 0.98 : 1
+      }
+    },
+    transition: {
+      type: animationType === "fade" ? ("tween" as const) : ("spring" as const),
+      duration: animationType === "fade" ? 0.22 : tuning.springDuration,
+      bounce: tuning.bounce,
+      damping: tuning.damping,
+      stiffness: tuning.stiffness
+    }
+  };
 }
 
 function OverlayBadge({ children, accent }: { children: ReactNode; accent?: boolean }) {
@@ -244,29 +292,17 @@ function OverlayCard({
     : undefined;
   const initials = authorInitials(message.authorName);
 
-  const variants = reducedMotion
-    ? {
-        hidden: { opacity: 0 },
-        visible: { opacity: 1 },
-        exit: { opacity: 0 }
-      }
-    : {
-        hidden: {
-          opacity: 0,
-          y: animationType === "fade" ? 0 : animationType === "scale" ? 10 : 26,
-          scale: animationType === "scale" ? 0.96 : 1
-        },
-        visible: {
-          opacity: 1,
-          y: 0,
-          scale: 1
-        },
-        exit: {
-          opacity: 0,
-          y: animationType === "fade" ? 0 : animationType === "scale" ? 8 : 18,
-          scale: animationType === "scale" ? 0.98 : 1
-        }
-      };
+  const { variants, transition } = cardMotion(animationType, reducedMotion, {
+    hiddenY: 26,
+    scaleHiddenY: 10,
+    hiddenScale: 0.96,
+    exitY: 18,
+    scaleExitY: 8,
+    springDuration: 0.42,
+    bounce: 0.16,
+    damping: 24,
+    stiffness: 180
+  });
 
   return (
     <motion.section
@@ -277,17 +313,7 @@ function OverlayCard({
       animate="visible"
       exit="exit"
       variants={variants}
-      transition={
-        reducedMotion
-          ? { type: "tween", duration: 0.01 }
-          : {
-              type: animationType === "fade" ? "tween" : "spring",
-              duration: animationType === "fade" ? 0.22 : 0.42,
-              bounce: 0.16,
-              damping: 24,
-              stiffness: 180
-            }
-      }
+      transition={transition}
       className="pointer-events-none relative overflow-visible"
       style={{
         width: isMinimal ? "min(100vw - 80px, 1180px)" : "min(100vw - 48px, 920px)",
@@ -469,29 +495,17 @@ function SuperChatCard({
       })
     : undefined;
 
-  const variants = reducedMotion
-    ? {
-        hidden: { opacity: 0 },
-        visible: { opacity: 1 },
-        exit: { opacity: 0 }
-      }
-    : {
-        hidden: {
-          opacity: 0,
-          y: animationType === "fade" ? 0 : animationType === "scale" ? 12 : 30,
-          scale: animationType === "scale" ? 0.94 : 1
-        },
-        visible: {
-          opacity: 1,
-          y: 0,
-          scale: 1
-        },
-        exit: {
-          opacity: 0,
-          y: animationType === "fade" ? 0 : animationType === "scale" ? 10 : 18,
-          scale: animationType === "scale" ? 0.98 : 1
-        }
-      };
+  const { variants, transition } = cardMotion(animationType, reducedMotion, {
+    hiddenY: 30,
+    scaleHiddenY: 12,
+    hiddenScale: 0.94,
+    exitY: 18,
+    scaleExitY: 10,
+    springDuration: 0.44,
+    bounce: 0.2,
+    damping: 22,
+    stiffness: 190
+  });
 
   return (
     <motion.section
@@ -504,17 +518,7 @@ function SuperChatCard({
       animate="visible"
       exit="exit"
       variants={variants}
-      transition={
-        reducedMotion
-          ? { type: "tween", duration: 0.01 }
-          : {
-              type: animationType === "fade" ? "tween" : "spring",
-              duration: animationType === "fade" ? 0.22 : 0.44,
-              bounce: 0.2,
-              damping: 22,
-              stiffness: 190
-            }
-      }
+      transition={transition}
       className="pointer-events-none relative overflow-visible"
       style={{
         width: "min(calc(100vw - 48px), 760px)",
@@ -625,7 +629,7 @@ function SuperChatCard({
   );
 }
 
-export function OverlayClient({ overlayToken }: OverlayClientProps) {
+export function OverlayClient() {
   const viewport = useViewportSize();
   const reducedMotion = Boolean(useReducedMotion());
   const isCompact = viewport.width < compactBreakpoint.width || viewport.height < compactBreakpoint.height;
@@ -659,7 +663,7 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
     });
 
     const subscribe = () => {
-      socket.emit(socketEvents.overlaySubscribe, overlayToken ? { overlayToken } : undefined);
+      socket.emit(socketEvents.overlaySubscribe);
     };
 
     const applyOverlayState = (nextState: OverlayState, nextEvent: OverlayEventName) => {
@@ -701,7 +705,7 @@ export function OverlayClient({ overlayToken }: OverlayClientProps) {
       socket.removeAllListeners();
       socket.disconnect();
     };
-  }, [overlayToken]);
+  }, []);
 
   const currentMessage = overlayState?.currentMessage ?? null;
   const currentKey = currentMessage ? messageKey(currentMessage) : null;

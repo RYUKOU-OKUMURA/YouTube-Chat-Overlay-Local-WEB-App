@@ -1,15 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
 import { BadgeJapaneseYen, Copy, MonitorCog, RefreshCcw, SlidersHorizontal, TestTube2 } from "lucide-react";
-import type { AppState, BroadcastStatus, ChatMessage, Settings, Theme, YouTubeStatus } from "@/types";
-import { socketEvents } from "@/types";
-import { isImportantMessage, maxRetainedSuperChats, prioritizeRetainedMessages } from "@/lib/messageRetention";
-import { buildOverlayUrl } from "@/lib/overlayUrl";
+import { isImportantMessage } from "@/lib/messageRetention";
 import { Button } from "@/components/common/Button";
 import { Panel } from "@/components/common/Panel";
-import { fetchJson } from "./api";
 import { ConnectionStrip } from "./ConnectionStrip";
 import { OAuthPanel } from "./OAuthPanel";
 import { BroadcastPanel } from "./BroadcastPanel";
@@ -17,44 +12,40 @@ import { OverlayPanel } from "./OverlayPanel";
 import { BroadcasterCockpit } from "./BroadcasterCockpit";
 import { MessagePanel, type CommentView } from "./MessagePanel";
 import { SettingsPanel } from "./SettingsPanel";
+import { useAdminDashboardState } from "./useAdminDashboardState";
+import { useAdminActions } from "./useAdminActions";
 
-type DashboardState = {
-  overlayToken: string;
-  messages: ChatMessage[];
-  superChats: ChatMessage[];
-  overlay: AppState["overlay"];
-  youtubeStatus: YouTubeStatus;
-  broadcastStatus: BroadcastStatus;
-  overlayConnected: boolean;
-  lastBroadcastUrl?: string;
-};
-
-type SettingsPatch = {
-  theme?: Partial<Theme>;
-  lastBroadcastUrl?: string;
-};
-
-const socketSyncFallbackDelayMs = 1200;
 const compactModeStorageKey = "admin-control-compact-mode";
 
 export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
-  const [state, setState] = useState<DashboardState | null>(null);
-  const [activeView, setActiveView] = useState<"control" | "admin">("control");
-  const [socketConnected, setSocketConnected] = useState(false);
   const [notice, setNotice] = useState(initialNotice);
-  const [broadcastUrl, setBroadcastUrl] = useState("");
+  const [activeView, setActiveView] = useState<"control" | "admin">("control");
   const [search, setSearch] = useState("");
   const [commentView, setCommentView] = useState<CommentView>("all");
   const [compactMode, setCompactModeState] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
-  const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
-  const socketRef = useRef<Socket | null>(null);
-  const socketSyncVersionRef = useRef(0);
   const listRef = useRef<HTMLDivElement | null>(null);
   const previousLatestMessageIdRef = useRef<string | null>(null);
   const messagesInitializedRef = useRef(false);
   const settingsPanelRef = useRef<HTMLDivElement | null>(null);
+
+  const { state, setState, socketConnected, lastSyncedAt, broadcastUrl, setBroadcastUrl, syncStatus } =
+    useAdminDashboardState(setNotice);
+  const {
+    busyAction,
+    overlayUrl,
+    patchSettings,
+    connectYouTube,
+    disconnectYouTube,
+    startBroadcast,
+    stopBroadcast,
+    refreshViewerMetrics,
+    testMessage,
+    showMessage,
+    hideOverlay,
+    copyOverlayUrl,
+    copyMessage
+  } = useAdminActions({ setState, broadcastUrl, setBroadcastUrl, setNotice });
 
   useEffect(() => {
     window.queueMicrotask(() => {
@@ -66,129 +57,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
     setCompactModeState(value);
     window.localStorage.setItem(compactModeStorageKey, String(value));
   }, []);
-
-  const applyAppState = useCallback((nextState: AppState) => {
-    const nextBroadcastUrl = nextState.broadcastStatus.currentBroadcastUrl ?? "";
-    setLastSyncedAt(new Date().toISOString());
-    setState((prev) => ({
-      ...(prev ?? {}),
-      overlayToken: nextState.overlayToken,
-      messages: nextState.messages,
-      superChats: nextState.superChats,
-      overlay: nextState.overlay,
-      youtubeStatus: nextState.youtubeStatus,
-      broadcastStatus: nextState.broadcastStatus,
-      overlayConnected: nextState.overlayConnected,
-      lastBroadcastUrl: nextBroadcastUrl || prev?.lastBroadcastUrl
-    }));
-    setBroadcastUrl((current) => current || nextBroadcastUrl);
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    let socketSyncReceived = false;
-    const fallbackController = new AbortController();
-
-    async function loadFallbackState() {
-      if (socketSyncReceived) return;
-      const syncVersion = socketSyncVersionRef.current;
-      try {
-        const nextState = await fetchJson<AppState>("/api/state", { signal: fallbackController.signal });
-        if (!mounted || socketSyncReceived || syncVersion !== socketSyncVersionRef.current) return;
-        applyAppState(nextState);
-      } catch (error) {
-        if (!mounted || socketSyncReceived || fallbackController.signal.aborted) return;
-        setNotice(error instanceof Error ? error.message : "管理画面の状態を読み込めませんでした。");
-      }
-    }
-
-    const socket = io({
-      path: "/socket.io",
-      transports: ["websocket", "polling"],
-      autoConnect: true
-    });
-    socketRef.current = socket;
-
-    socket.on("connect", () => {
-      setSocketConnected(true);
-      socket.emit(socketEvents.adminSubscribe);
-    });
-
-    socket.on("disconnect", () => {
-      setSocketConnected(false);
-    });
-
-    socket.on(socketEvents.stateSync, (nextState: AppState) => {
-      socketSyncReceived = true;
-      socketSyncVersionRef.current += 1;
-      fallbackController.abort();
-      applyAppState(nextState);
-    });
-    socket.on(socketEvents.commentNew, (message: ChatMessage) => {
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              messages: prioritizeRetainedMessages([
-                message,
-                ...prev.messages.filter((item) => item.platformMessageId !== message.platformMessageId)
-              ]),
-              superChats: message.isSuperChat
-                ? [message, ...prev.superChats.filter((item) => item.platformMessageId !== message.platformMessageId)].slice(0, maxRetainedSuperChats)
-                : prev.superChats
-            }
-          : prev
-      );
-    });
-    socket.on(socketEvents.commentUpdate, (message: ChatMessage) => {
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              messages: prev.messages.map((item) =>
-                item.platformMessageId === message.platformMessageId ? message : item
-              ),
-              superChats: prev.superChats.map((item) =>
-                item.platformMessageId === message.platformMessageId ? message : item
-              ),
-              overlay:
-                prev.overlay.currentMessage?.platformMessageId === message.platformMessageId
-                  ? { ...prev.overlay, currentMessage: null }
-                  : prev.overlay
-            }
-          : prev
-      );
-    });
-    socket.on(socketEvents.broadcastStatus, (broadcastStatus: BroadcastStatus) => {
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              broadcastStatus,
-              lastBroadcastUrl: broadcastStatus.currentBroadcastUrl ?? prev.lastBroadcastUrl
-            }
-          : prev
-      );
-    });
-    socket.on(socketEvents.youtubeStatus, (youtubeStatus: YouTubeStatus) => {
-      setState((prev) => (prev ? { ...prev, youtubeStatus } : prev));
-    });
-    socket.on(socketEvents.overlayConnected, ({ connected }: { connected: boolean }) => {
-      setState((prev) => (prev ? { ...prev, overlayConnected: connected } : prev));
-    });
-
-    const fallbackTimer = window.setTimeout(() => {
-      void loadFallbackState();
-    }, socketSyncFallbackDelayMs);
-
-    return () => {
-      mounted = false;
-      window.clearTimeout(fallbackTimer);
-      fallbackController.abort();
-      socket.disconnect();
-      socketRef.current = null;
-    };
-  }, [applyAppState]);
 
   const jumpToLatest = useCallback(() => {
     if (!listRef.current) return;
@@ -275,214 +143,6 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
     }
     return searchMatchedMessages;
   }, [commentView, searchMatchedMessages]);
-
-  async function syncStatus() {
-    const socket = socketRef.current;
-    if (socket?.connected) {
-      socket.emit(socketEvents.requestSync);
-      return;
-    }
-
-    const syncVersion = socketSyncVersionRef.current;
-    try {
-      const nextState = await fetchJson<AppState>("/api/state");
-      if (syncVersion !== socketSyncVersionRef.current) return;
-      applyAppState(nextState);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "同期に失敗しました。");
-    }
-  }
-
-  async function copyText(text: string, label: string) {
-    await navigator.clipboard.writeText(text);
-    setNotice(`${label}をコピーしました。`);
-  }
-
-  function overlayUrl() {
-    if (!state) return "";
-    return buildOverlayUrl(window.location.origin);
-  }
-
-  async function patchSettings(patch: SettingsPatch) {
-    setBusyAction("settings");
-    try {
-      const next = await fetchJson<Settings>("/api/settings", {
-        method: "PATCH",
-        body: JSON.stringify(patch)
-      });
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              overlayToken: next.overlayToken,
-              overlay: {
-                ...prev.overlay,
-                theme: next.theme
-              },
-              lastBroadcastUrl: next.lastBroadcastUrl ?? prev.lastBroadcastUrl
-            }
-          : prev
-      );
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "設定を保存できませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function connectYouTube() {
-    setBusyAction("oauth");
-    try {
-      const result = await fetchJson<{ url: string }>("/api/youtube/auth-url");
-      window.location.href = result.url;
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "OAuth接続を開始できませんでした。");
-      setBusyAction(null);
-    }
-  }
-
-  async function disconnectYouTube() {
-    setBusyAction("oauth");
-    try {
-      const next = await fetchJson<YouTubeStatus>("/api/youtube/disconnect", { method: "POST" });
-      setState((prev) => (prev ? { ...prev, youtubeStatus: next } : prev));
-      setNotice("YouTube接続を解除しました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "接続解除に失敗しました。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function startBroadcast() {
-    setBusyAction("broadcast");
-    try {
-      const nextBroadcastUrl = broadcastUrl.trim();
-      const result = await fetchJson<BroadcastStatus>("/api/broadcast/start", {
-        method: "POST",
-        body: JSON.stringify(nextBroadcastUrl ? { broadcastUrl: nextBroadcastUrl } : {})
-      });
-      setBroadcastUrl(result.currentBroadcastUrl ?? nextBroadcastUrl);
-      setState((prev) => (prev ? { ...prev, broadcastStatus: result, lastBroadcastUrl: result.currentBroadcastUrl ?? nextBroadcastUrl } : prev));
-      setNotice("コメント取得を開始しました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "コメント取得を開始できませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function stopBroadcast() {
-    setBusyAction("broadcast");
-    try {
-      const result = await fetchJson<BroadcastStatus>("/api/broadcast/stop", { method: "POST" });
-      setState((prev) => (prev ? { ...prev, broadcastStatus: result } : prev));
-      setNotice("コメント取得を停止しました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "コメント取得を停止できませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function refreshViewerMetrics() {
-    setBusyAction("viewer-metrics");
-    try {
-      const result = await fetchJson<BroadcastStatus>("/api/broadcast/viewers/refresh", { method: "POST" });
-      setState((prev) => (prev ? { ...prev, broadcastStatus: result } : prev));
-      setNotice("同時視聴者数を更新しました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "同時視聴者数を更新できませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function testMessage(kind: "normal" | "superChat" = "normal") {
-    const isSuperChat = kind === "superChat";
-    setBusyAction(isSuperChat ? "test-super-chat" : "test");
-    try {
-      const result = await fetchJson<{ message: ChatMessage; overlay: AppState["overlay"] }>(
-        "/api/test-message",
-        isSuperChat
-          ? {
-              method: "POST",
-              body: JSON.stringify({ kind: "superChat" })
-            }
-          : { method: "POST" }
-      );
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              messages: [result.message, ...prev.messages.filter((message) => message.id !== result.message.id)].slice(0, 300),
-              superChats: result.message.isSuperChat
-                ? [result.message, ...prev.superChats.filter((message) => message.id !== result.message.id)].slice(0, 100)
-                : prev.superChats,
-              overlay: result.overlay
-            }
-          : prev
-      );
-      setNotice(isSuperChat ? "テストスパチャを送信しました。" : "テストコメントを送信しました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : isSuperChat ? "テストスパチャを送信できませんでした。" : "テストコメントを送信できませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function showMessage(message: ChatMessage) {
-    if (message.deletionStatus) {
-      setNotice("削除済みコメントはOBSに表示できません。");
-      return;
-    }
-
-    setBusyAction(`show-${message.id}`);
-    try {
-      const next = await fetchJson<AppState["overlay"]>(`/api/messages/${message.id}/show`, { method: "POST" });
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              messages: prev.messages.map((item) =>
-                item.id === message.id ? { ...item, displayedAt: next.currentMessage?.displayedAt ?? new Date().toISOString() } : item
-              ),
-              superChats: prev.superChats.map((item) =>
-                item.id === message.id ? { ...item, displayedAt: next.currentMessage?.displayedAt ?? new Date().toISOString() } : item
-              ),
-              overlay: next
-            }
-          : prev
-      );
-      setNotice("コメントを表示しました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "コメントを表示できませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function hideOverlay() {
-    setBusyAction("hide");
-    try {
-      const next = await fetchJson<AppState["overlay"]>("/api/overlay/hide", { method: "POST" });
-      setState((prev) => (prev ? { ...prev, overlay: next } : prev));
-      setNotice("OBS表示を非表示にしました。");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "OBS表示を非表示にできませんでした。");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function copyOverlayUrl() {
-    if (!state) return;
-    await copyText(overlayUrl(), "OBS URL");
-  }
-
-  async function copyMessage(message: ChatMessage) {
-    await copyText(message.messageText, "コメント");
-  }
 
   const lastSyncLabel = lastSyncedAt ? `同期 ${new Date(lastSyncedAt).toLocaleTimeString()}` : undefined;
   const latestMessageId = state?.messages[0]?.id ?? null;

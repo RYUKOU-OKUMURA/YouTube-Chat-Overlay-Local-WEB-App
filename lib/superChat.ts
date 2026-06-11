@@ -1,4 +1,4 @@
-export type SuperChatTier = {
+type SuperChatTier = {
   id: "blue" | "gold" | "purple" | "red";
   minAmount: number;
   maxAmount: number | null;
@@ -87,7 +87,7 @@ export const superChatTiers: SuperChatTier[] = [
   }
 ];
 
-export const fallbackSuperChatTier = superChatTiers[1];
+const fallbackSuperChatTier = superChatTiers[1];
 
 export function parseYenAmount(amountText?: string) {
   if (!amountText) return null;

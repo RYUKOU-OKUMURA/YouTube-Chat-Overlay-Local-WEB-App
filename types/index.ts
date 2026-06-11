@@ -1,5 +1,3 @@
-export type Badge = "member" | "moderator" | "owner" | "superChat";
-
 export type Theme = {
   stylePreset: "midnight-glass" | "warm-pop" | "minimal-broadcast" | "festival-neon" | "clinic-calm" | "comic-pop";
   fontFamily: string;
@@ -99,7 +97,6 @@ export type BroadcastStatus = {
 };
 
 export type AppState = {
-  overlayToken: string;
   messages: ChatMessage[];
   superChats: ChatMessage[];
   overlay: OverlayState;
@@ -130,7 +127,6 @@ export type ApiResponse<T> =
   | { ok: false; error: { code: ApiErrorCode; message: string } };
 
 export type Settings = {
-  overlayToken: string;
   theme: Theme;
   lastBroadcastUrl?: string;
 };

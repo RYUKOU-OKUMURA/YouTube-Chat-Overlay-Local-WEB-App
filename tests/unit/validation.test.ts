@@ -9,9 +9,7 @@ describe("validation defaults", () => {
   });
 
   it("fills settings defaults for theme", () => {
-    const parsed = settingsSchema.parse({
-      overlayToken: "x".repeat(24)
-    });
+    const parsed = settingsSchema.parse({});
 
     expect(parsed.theme).toEqual(defaultTheme);
   });

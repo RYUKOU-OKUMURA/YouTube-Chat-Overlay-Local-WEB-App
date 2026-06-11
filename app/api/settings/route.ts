@@ -6,7 +6,6 @@ import { appController } from "@/server/state/appController";
 export async function GET() {
   const state = await appController.getState();
   return jsonOk({
-    overlayToken: state.overlayToken,
     theme: state.overlay.theme,
     lastBroadcastUrl: state.broadcastStatus.currentBroadcastUrl
   });

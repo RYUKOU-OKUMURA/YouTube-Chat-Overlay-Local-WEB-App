@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@9.15.4",
   "scripts": {
     "dev": "tsx server.ts",
     "build": "next build",
@@ -14,35 +13,30 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@next/env": "latest",
-    "framer-motion": "latest",
-    "googleapis": "latest",
-    "lucide-react": "latest",
-    "next": "latest",
-    "pino": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "socket.io": "latest",
-    "socket.io-client": "latest",
-    "zod": "latest"
+    "@next/env": "^16.2.4",
+    "framer-motion": "^12.38.0",
+    "googleapis": "^171.4.0",
+    "lucide-react": "^1.11.0",
+    "next": "^16.2.4",
+    "pino": "^10.3.1",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@playwright/test": "latest",
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4.2.4",
-    "@testing-library/jest-dom": "latest",
-    "@testing-library/react": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "@vitejs/plugin-react": "latest",
-    "autoprefixer": "latest",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.4",
-    "jsdom": "latest",
-    "postcss": "latest",
-    "tailwindcss": "latest",
-    "tsx": "latest",
-    "typescript": "latest",
-    "vitest": "latest"
+    "postcss": "^8.5.10",
+    "tailwindcss": "^4.2.4",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
   }
 }

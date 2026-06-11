@@ -14,7 +14,7 @@ function getOAuthEnv() {
   return { clientId, clientSecret, redirectUri };
 }
 
-export function createOAuthClient() {
+function createOAuthClient() {
   const env = getOAuthEnv();
   return new google.auth.OAuth2(env.clientId, env.clientSecret, env.redirectUri);
 }

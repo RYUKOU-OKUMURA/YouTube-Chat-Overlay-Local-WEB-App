@@ -33,7 +33,6 @@ vi.mock("@/server/youtube/oauth", () => ({
 }));
 
 const settings = {
-  overlayToken: "test-overlay-token",
   theme: {}
 };
 

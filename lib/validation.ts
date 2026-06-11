@@ -34,7 +34,6 @@ export const themeSchema = z.object({
 });
 
 export const settingsSchema = z.object({
-  overlayToken: z.string().min(24),
   theme: themeSchema.default(defaultTheme),
   lastBroadcastUrl: z.string().optional()
 });

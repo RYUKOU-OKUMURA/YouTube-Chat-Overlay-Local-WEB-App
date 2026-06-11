@@ -7,10 +7,6 @@ import { normalizeTheme, settingsSchema } from "@/lib/validation";
 const dataDir = path.join(process.cwd(), "data");
 const settingsPath = path.join(dataDir, "settings.json");
 
-export function createOverlayToken() {
-  return randomBytes(24).toString("base64url");
-}
-
 async function writeJsonAtomic(filePath: string, value: unknown) {
   await mkdir(path.dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
@@ -18,9 +14,8 @@ async function writeJsonAtomic(filePath: string, value: unknown) {
   await rename(tmpPath, filePath);
 }
 
-export function createDefaultSettings(): Settings {
+function createDefaultSettings(): Settings {
   return {
-    overlayToken: createOverlayToken(),
     theme: defaultTheme
   };
 }
@@ -44,7 +39,7 @@ export async function readSettings(): Promise<Settings> {
   return defaults;
 }
 
-export async function writeSettings(settings: Settings): Promise<Settings> {
+async function writeSettings(settings: Settings): Promise<Settings> {
   const normalized = settingsSchema.parse({
     ...settings,
     theme: normalizeTheme(settings.theme)

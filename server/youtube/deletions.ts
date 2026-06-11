@@ -5,7 +5,7 @@ import {
 } from "@/lib/youtubeSystemMessages";
 import type { ChatMessage } from "@/types";
 
-export type LiveChatMessageDeletionBase = {
+type LiveChatMessageDeletionBase = {
   deletionStatus: NonNullable<ChatMessage["deletionStatus"]>;
   deletedAt: string;
   /** Author retract placeholders: match the latest message from the author at or before this time. */
@@ -81,9 +81,6 @@ export function deletionKey(deletion: LiveChatMessageDeletion) {
   }
   return undefined;
 }
-
-/** @deprecated Use deletionKey */
-export const deletionMergeKey = deletionKey;
 
 export function isDeletionEventType(type: string | null | undefined) {
   return (

@@ -136,7 +136,3 @@ export const overlayStylePresets: OverlayStylePreset[] = [
     }
   }
 ];
-
-export function getOverlayStylePreset(id: Theme["stylePreset"]) {
-  return overlayStylePresets.find((preset) => preset.id === id) ?? overlayStylePresets[0];
-}
