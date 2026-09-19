@@ -3,7 +3,7 @@ import {
   getActiveLiveBroadcastInfo,
   getLiveChatInfo,
   getViewerMetrics,
-  listLiveChatDeletionEvents,
+  getLiveChatSnapshot,
   streamLiveChatMessages,
   type LiveChatInfo,
   type ClassifiedYouTubeError
@@ -61,10 +61,6 @@ import type {
   YouTubeStatus
 } from "@/types";
 
-// Retractions never arrive over the stream connection; a periodic list snapshot
-// is the only way to detect them. 30s bounds how long a deleted comment looks
-// normal in the admin view (5 quota units/call ≈ 600 units/hour while live).
-const deletionReconcileIntervalMs = 30_000;
 const autoDetectStartKey = "__auto_detect_current_live__";
 
 export class AppController {
@@ -74,6 +70,10 @@ export class AppController {
   private settings!: Settings;
   private messages: ChatMessage[] = [];
   private superChats: ChatMessage[] = [];
+  /** IDs waiting for the single-comment display action, separate from history. */
+  private nextMessageIds: string[] = [];
+  private nextMessageIdSet = new Set<string>();
+  private displayQueue: Promise<void> = Promise.resolve();
   private fetchedMessageIds = new Set<string>();
   private fetchedMessageIdQueue: string[] = [];
   private pendingMessageDeletions = new Map<string, LiveChatMessageDeletion>();
@@ -84,8 +84,6 @@ export class AppController {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private viewerMetricsTimer: NodeJS.Timeout | null = null;
   private viewerMetricsRefreshInFlight: Promise<BroadcastStatus> | null = null;
-  private deletionReconcileTimer: NodeJS.Timeout | null = null;
-  private deletionReconcileInFlight = false;
   private streamGeneration = 0;
   private startRequestGeneration = 0;
   private startQueue: Promise<unknown> = Promise.resolve();
@@ -281,6 +279,8 @@ export class AppController {
     this.pendingMessageDeletions.clear();
     this.warnedPendingDeletionKeys.clear();
     this.deletionRegistry.clear();
+    this.nextMessageIds = [];
+    this.nextMessageIdSet.clear();
     this.messages = [];
     this.superChats = [];
     this.settings = nextSettings;
@@ -310,7 +310,6 @@ export class AppController {
     this.events.emit("broadcast:status", this.broadcastStatus);
     await this.emitSync();
     this.scheduleViewerMetricsRefresh(generation);
-    this.scheduleDeletionReconcile(info.liveChatId, generation);
     void this.consumeLiveChatStream(generation);
     return this.broadcastStatus;
   }
@@ -428,15 +427,123 @@ export class AppController {
 
   async showMessage(messageId: string) {
     await this.init();
+    return this.serializeDisplay(() => this.showMessageNow(messageId));
+  }
+
+  async showNextMessage() {
+    await this.init();
+    return this.serializeDisplay(() => this.showNextMessageNow());
+  }
+
+  private async showMessageNow(messageId: string) {
+    const snapshot = await this.refreshDisplaySnapshot();
     const message = this.findMessage(messageId);
     if (message.deletionStatus) {
-      throw new Error("削除済みコメントはOBSに表示できません。");
+      throw new Error("削除済みコメントは表示できません。");
     }
+    const verified = this.verifyDisplayCandidate(message, snapshot);
+    if (!verified) {
+      throw new Error("このコメントはYouTube上で確認できないため表示できません。");
+    }
+    return this.displaySingleMessage(verified);
+  }
+
+  private async showNextMessageNow() {
+    const snapshot = await this.refreshDisplaySnapshot();
+
+    while (this.nextMessageIds.length > 0) {
+      const messageId = this.nextMessageIds.shift();
+      if (!messageId) {
+        break;
+      }
+      this.nextMessageIdSet.delete(messageId);
+
+      let message: ChatMessage;
+      try {
+        message = this.findMessage(messageId);
+      } catch {
+        continue;
+      }
+
+      const verified = this.verifyDisplayCandidate(message, snapshot);
+      if (verified) {
+        return this.displaySingleMessage(verified);
+      }
+    }
+
+    throw new Error("表示可能な未表示コメントがありません。");
+  }
+
+  private serializeDisplay<T>(operation: () => Promise<T>) {
+    const result = this.displayQueue.then(operation);
+    this.displayQueue = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
+  private async refreshDisplaySnapshot() {
+    const liveChatId = this.broadcastStatus.liveChatId;
+    const generation = this.streamGeneration;
+    if (!liveChatId || !this.broadcastStatus.isFetchingComments) {
+      return null;
+    }
+
+    const snapshot = await getLiveChatSnapshot(liveChatId);
+    if (
+      !this.isCurrentStream(generation) ||
+      !this.broadcastStatus.isFetchingComments ||
+      this.broadcastStatus.liveChatId !== liveChatId
+    ) {
+      throw new Error("コメント取得対象が切り替わったため、表示を確認できませんでした。");
+    }
+
+    this.applyMessageDeletions(snapshot.deletions);
+    return {
+      saturated: snapshot.saturated,
+      platformMessageIds: new Set(snapshot.messages.map((message) => message.platformMessageId))
+    };
+  }
+
+  private verifyDisplayCandidate(
+    message: ChatMessage,
+    snapshot: { saturated: boolean; platformMessageIds: Set<string> } | null
+  ) {
+    if (message.deletionStatus) {
+      this.removeNextMessage(message.platformMessageId);
+      return undefined;
+    }
+    if (!snapshot || message.messageType === "testMessage") {
+      return message;
+    }
+
+    if (snapshot.platformMessageIds.has(message.platformMessageId)) {
+      return this.findMessage(message.id);
+    }
+
+    // A full (<200) snapshot makes absence a safe fail-closed deletion decision
+    // for this small-chat mode. A saturated view remains inconclusive, but the
+    // candidate is still not displayed.
+    if (!snapshot.saturated) {
+      this.applyMessageDeletion({
+        targetPlatformMessageId: message.platformMessageId,
+        deletionStatus: "deleted",
+        deletedAt: new Date().toISOString()
+      });
+    }
+    this.removeNextMessage(message.platformMessageId);
+    return undefined;
+  }
+
+  private async displaySingleMessage(message: ChatMessage) {
+    const displayedAt = new Date().toISOString();
     this.overlayState = {
       ...this.overlayState,
-      currentMessage: { ...message, displayedAt: new Date().toISOString() }
+      currentMessage: { ...message, displayedAt }
     };
-    this.markDisplayed(messageId);
+    this.markDisplayed(message.id, displayedAt);
+    this.removeNextMessage(message.platformMessageId);
     this.events.emit("overlay:show", this.overlayState);
     await this.emitSync();
     return this.overlayState;
@@ -573,7 +680,6 @@ export class AppController {
         if (ended) {
           this.clearCurrentAbortController(abortController);
           this.clearViewerMetricsTimer();
-          this.clearDeletionReconcileTimer();
           this.broadcastStatus = {
             ...this.broadcastStatus,
             viewerMetrics: this.broadcastStatus.viewerMetrics
@@ -779,6 +885,7 @@ export class AppController {
     for (const message of freshMessages) {
       this.applyPendingMessageDeletionFor(message.platformMessageId);
       const stored = this.findStoredMessage(message.platformMessageId) ?? message;
+      this.enqueueNextMessage(stored);
       this.events.emit("comment:new", stored);
     }
 
@@ -828,29 +935,13 @@ export class AppController {
     this.messages = this.messages.map(updateMessage);
     this.superChats = this.superChats.map(updateMessage);
 
-    if (
-      this.overlayState.currentMessage &&
-      deletionMatchesMessage(
-        resolvedDeletion,
-        this.overlayState.currentMessage,
-        this.messages,
-        this.superChats,
-        timelineContext
-      )
-    ) {
-      this.overlayState = {
-        ...this.overlayState,
-        currentMessage: null
-      };
-      this.events.emit("overlay:hide", this.overlayState);
-    }
-
     if (updatedMessages.size > 0) {
       for (const updatedMessage of updatedMessages.values()) {
         this.deletionRegistry.recordPlatformDeletion(updatedMessage.platformMessageId, {
           deletionStatus: resolvedDeletion.deletionStatus,
           deletedAt: resolvedDeletion.deletedAt
         });
+        this.removeNextMessage(updatedMessage.platformMessageId);
       }
       this.clearPendingDeletionKeys(deletion, resolvedDeletion);
       for (const updatedMessage of updatedMessages.values()) {
@@ -1032,21 +1123,48 @@ export class AppController {
     return message;
   }
 
-  private markDisplayed(messageId: string) {
-    const now = new Date().toISOString();
+  private markDisplayed(messageId: string, displayedAt = new Date().toISOString()) {
     this.messages = this.messages.map((message) =>
-      message.id === messageId ? { ...message, displayedAt: now } : message
+      message.id === messageId ? { ...message, displayedAt } : message
     );
     this.superChats = this.superChats.map((message) =>
-      message.id === messageId ? { ...message, displayedAt: now } : message
+      message.id === messageId ? { ...message, displayedAt } : message
     );
+  }
+
+  private enqueueNextMessage(message: ChatMessage) {
+    if (
+      !this.isDisplayableMessage(message) ||
+      message.deletionStatus ||
+      message.displayedAt ||
+      this.nextMessageIdSet.has(message.platformMessageId)
+    ) {
+      return;
+    }
+    this.nextMessageIdSet.add(message.platformMessageId);
+    this.nextMessageIds.push(message.platformMessageId);
+  }
+
+  private isDisplayableMessage(message: ChatMessage) {
+    return (
+      message.messageType === "textMessageEvent" ||
+      message.messageType === "superChatEvent" ||
+      message.messageType === "superStickerEvent" ||
+      message.messageType === "testMessage"
+    );
+  }
+
+  private removeNextMessage(platformMessageId: string) {
+    if (!this.nextMessageIdSet.delete(platformMessageId)) {
+      return;
+    }
+    this.nextMessageIds = this.nextMessageIds.filter((id) => id !== platformMessageId);
   }
 
   private resetActiveStream() {
     this.streamGeneration += 1;
     this.reconnectDelayMs = initialReconnectDelayMs;
     this.clearViewerMetricsTimer();
-    this.clearDeletionReconcileTimer();
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -1081,61 +1199,6 @@ export class AppController {
     if (this.viewerMetricsTimer) {
       clearTimeout(this.viewerMetricsTimer);
       this.viewerMetricsTimer = null;
-    }
-  }
-
-  private scheduleDeletionReconcile(liveChatId: string, generation: number) {
-    this.clearDeletionReconcileTimer();
-    if (!this.isCurrentStream(generation) || !liveChatId) {
-      return;
-    }
-
-    const scheduleNext = () => {
-      if (!this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments) {
-        return;
-      }
-
-      this.deletionReconcileTimer = setTimeout(() => {
-        this.deletionReconcileTimer = null;
-        void this.reconcileDeletionsFromList(liveChatId, generation).then(() => {
-          scheduleNext();
-        });
-      }, deletionReconcileIntervalMs);
-    };
-
-    void this.reconcileDeletionsFromList(liveChatId, generation).then(() => {
-      scheduleNext();
-    });
-  }
-
-  private clearDeletionReconcileTimer() {
-    if (this.deletionReconcileTimer) {
-      clearTimeout(this.deletionReconcileTimer);
-      this.deletionReconcileTimer = null;
-    }
-  }
-
-  private async reconcileDeletionsFromList(liveChatId: string, generation: number) {
-    if (this.deletionReconcileInFlight || !this.isCurrentStream(generation) || !this.broadcastStatus.isFetchingComments) {
-      return;
-    }
-
-    this.deletionReconcileInFlight = true;
-    try {
-      const deletions = await listLiveChatDeletionEvents(liveChatId);
-      if (deletions.length > 0 && this.isCurrentStream(generation)) {
-        this.applyMessageDeletions(deletions);
-      }
-    } catch (error) {
-      logger.warn(
-        {
-          liveChatId,
-          error: error instanceof Error ? error.message : String(error)
-        },
-        "Failed to reconcile YouTube deletion events from liveChatMessages.list."
-      );
-    } finally {
-      this.deletionReconcileInFlight = false;
     }
   }
 
