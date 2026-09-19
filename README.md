@@ -113,7 +113,7 @@ YouTube ライブ映像プレビューは管理画面の操作画面だけに表
 - 削除・取消コメントは一覧から消さず、本文を「このコメントは削除されました。」または「このコメントは投稿者により取り消されました。」へ置き換えます。対象が OBS 表示中なら自動で非表示にし、削除済みコメントの再表示は禁止します。
 - 削除イベントは `messageDeletedEvent`、`messageRetractedEvent`、`tombstone` を扱います。削除対象が保持中コメントに見つからない場合は、実配信調査用に warning ログを出します。
 - 通常コメント本文は `textMessageDetails.messageText` を優先し、Super Chat は `superChatDetails.userComment` も本文候補に含めます。どちらも空の場合は `displayMessage` に fallback します。
-- YouTube独自絵文字の画像化や shortcode 変換は未実装です。
+- YouTube独自絵文字は、非公式 InnerTube クライアント（`youtubei.js`）から画像 URL を補完できた場合にインライン画像で表示します。補完できない場合は `:shortcode:` のテキスト表示にフォールバックします。
 - 同時視聴者数はコメント取得中に3分間隔で更新します。手動更新もサーバー側で同じ3分間隔に抑制し、連打でYouTube APIを消費しないようにしています。視聴者数非表示や取得不可の場合は件数を出しません。
 - 300件を超える場合は、未表示 Super Chat、未表示の配信者/モデレーター/メンバー、未表示通常、表示済み重要、表示済み通常の順で優先保持します。
 - 同一 `platformMessageId` は重複表示しません。
@@ -157,7 +157,7 @@ macOS の sandbox や CI 環境によっては Playwright Chromium が起動で�
 
 - 管理画面、API、Socket.IO に認証はありません。ローカル専用です。
 - OAuth `state` 検証は未実装です。
-- YouTube独自絵文字の画像表示には未対応です。
+- YouTube独自絵文字の画像補完は非公式 InnerTube 依存です。YouTube 側の内部仕様変更・取得失敗時は `:shortcode:` 表示へフォールバックします。
 
 ## Documents
 

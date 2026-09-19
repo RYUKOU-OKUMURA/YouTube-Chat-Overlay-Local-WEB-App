@@ -88,6 +88,9 @@ export function attachSocketServer(httpServer: HttpServer) {
   appController.events.on("overlay:hide", (state) => {
     emitToOverlayRoom(socketEvents.overlayHide, state);
   });
+  appController.events.on("overlay:content-update", (state) => {
+    emitToOverlayRoom(socketEvents.overlayContentUpdate, state);
+  });
   appController.events.on("overlay:test", (state) => {
     emitToOverlayRoom(socketEvents.overlayTest, state);
   });

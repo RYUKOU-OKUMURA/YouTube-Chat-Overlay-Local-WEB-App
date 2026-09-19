@@ -4,6 +4,7 @@ import { BadgeJapaneseYen, Copy, Play } from "lucide-react";
 import type { ChatMessage } from "@/types";
 import { Badge } from "@/components/common/Badge";
 import { Button } from "@/components/common/Button";
+import { ChatMessageContent } from "@/components/common/ChatMessageContent";
 import { Panel } from "@/components/common/Panel";
 
 function formatChatTime(value: string) {
@@ -74,7 +75,7 @@ export function SuperChatPanel({
                       deleted ? "text-slate-500 line-through decoration-slate-500 decoration-2" : "text-slate-900"
                     }`}
                   >
-                    {message.messageText}
+                    <ChatMessageContent message={message} />
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <Button

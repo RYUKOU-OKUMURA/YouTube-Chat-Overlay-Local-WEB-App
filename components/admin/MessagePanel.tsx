@@ -2,6 +2,7 @@ import { useMemo, useState, type CSSProperties, type ReactNode, type RefObject }
 import { ArrowDownToLine, Copy, EyeOff, Palette, Play, Rows3, Search, Star, X } from "lucide-react";
 import type { ChatMessage } from "@/types";
 import { Badge } from "@/components/common/Badge";
+import { ChatMessageContent } from "@/components/common/ChatMessageContent";
 import { Button } from "@/components/common/Button";
 import { cn } from "@/components/common/cn";
 
@@ -243,7 +244,7 @@ export function MessagePanel({
               </Badge>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs font-semibold text-slate-800">{activeMessage.authorName}</div>
-                <div className="line-clamp-2 whitespace-pre-wrap break-words text-sm leading-5 text-slate-950">{activeMessage.messageText}</div>
+                <div className="line-clamp-2 whitespace-pre-wrap break-words text-sm leading-5 text-slate-950"><ChatMessageContent message={activeMessage} /></div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
                 <IconButton label="表示中コメントをコピー" onClick={() => onCopyMessage(activeMessage)}>
@@ -374,7 +375,7 @@ export function MessagePanel({
                           )}
                           style={compactMode ? compactMessagePreviewStyle : messagePreviewStyle}
                         >
-                          {message.messageText}
+                          <ChatMessageContent message={message} />
                         </p>
                         {!paidEvent && message.amountText ? <div className="mt-1 text-xs font-medium text-amber-700">{message.amountText}</div> : null}
                       </button>

@@ -40,6 +40,7 @@ import {
 } from "@/server/state/viewerMetricsHelpers";
 import { parseYouTubeVideoId } from "@/server/youtube/parseYouTubeUrl";
 import { getYouTubeStatus } from "@/server/youtube/oauth";
+import { YouTubeCustomEmojiStream } from "@/server/youtube/customEmoji";
 import { patchSettings, readSettings } from "@/server/settings/settingsStore";
 import {
   maxFetchedMessageIds,
@@ -53,6 +54,7 @@ import type {
   AppState,
   BroadcastStatus,
   ChatMessage,
+  ChatMessageContentSegment,
   OverlayState,
   PatchSettingsInput,
   Settings,
@@ -81,6 +83,8 @@ export class AppController {
   private deletionRegistry = new DeletionRegistry();
   private nextPageToken: string | undefined;
   private streamAbortController: AbortController | null = null;
+  private customEmojiStream: YouTubeCustomEmojiStream | null = null;
+  private customEmojiContent = new Map<string, ChatMessageContentSegment[]>();
   private reconnectTimer: NodeJS.Timeout | null = null;
   private viewerMetricsTimer: NodeJS.Timeout | null = null;
   private viewerMetricsRefreshInFlight: Promise<BroadcastStatus> | null = null;
@@ -278,6 +282,7 @@ export class AppController {
     this.shortStreamCloseCount = 0;
     this.fetchedMessageIds.clear();
     this.fetchedMessageIdQueue = [];
+    this.customEmojiContent.clear();
     this.pendingMessageDeletions.clear();
     this.warnedPendingDeletionKeys.clear();
     this.deletionRegistry.clear();
@@ -311,6 +316,7 @@ export class AppController {
     await this.emitSync();
     this.scheduleViewerMetricsRefresh(generation);
     this.scheduleDeletionReconcile(info.liveChatId, generation);
+    this.startCustomEmojiStream(info.videoId, generation);
     void this.consumeLiveChatStream(generation);
     return this.broadcastStatus;
   }
@@ -711,7 +717,8 @@ export class AppController {
   private ingestMessages(messages: ChatMessage[]) {
     const freshMessages: ChatMessage[] = [];
 
-    for (const message of messages) {
+    for (const incomingMessage of messages) {
+      const message = this.withCustomEmojiContent(incomingMessage);
       if (this.ingestAuthorRetractionPlaceholder(message)) {
         continue;
       }
@@ -783,6 +790,55 @@ export class AppController {
     }
 
     this.replayResolvablePendingDeletions();
+  }
+
+  private startCustomEmojiStream(videoId: string, generation: number) {
+    // Unit tests exercise the official stream with fixtures; never open a real
+    // InnerTube connection as a side effect of those tests.
+    if (process.env.NODE_ENV === "test") return;
+
+    this.customEmojiStream?.stop();
+    const stream = new YouTubeCustomEmojiStream(videoId, (platformMessageId, content) => {
+      if (!this.isCurrentStream(generation) || stream !== this.customEmojiStream) {
+        return;
+      }
+      this.rememberCustomEmojiContent(platformMessageId, content);
+    });
+    this.customEmojiStream = stream;
+    stream.start();
+  }
+
+  private rememberCustomEmojiContent(platformMessageId: string, content: ChatMessageContentSegment[]) {
+    this.customEmojiContent.set(platformMessageId, content);
+    while (this.customEmojiContent.size > maxFetchedMessageIds) {
+      const oldest = this.customEmojiContent.keys().next().value;
+      if (!oldest) break;
+      this.customEmojiContent.delete(oldest);
+    }
+
+    const updateContent = (message: ChatMessage) =>
+      message.platformMessageId === platformMessageId && !message.deletionStatus
+        ? { ...message, content }
+        : message;
+    const existing = this.findStoredMessage(platformMessageId);
+    if (!existing || existing.deletionStatus) return;
+
+    this.messages = this.messages.map(updateContent);
+    this.superChats = this.superChats.map(updateContent);
+    const updated = this.findStoredMessage(platformMessageId);
+    if (!updated) return;
+
+    this.events.emit("comment:update", updated);
+    if (this.overlayState.currentMessage?.platformMessageId === platformMessageId) {
+      this.overlayState = { ...this.overlayState, currentMessage: updated };
+      this.events.emit("overlay:content-update", this.overlayState);
+    }
+  }
+
+  private withCustomEmojiContent(message: ChatMessage): ChatMessage {
+    if (message.content?.length) return message;
+    const content = this.customEmojiContent.get(message.platformMessageId);
+    return content ? { ...message, content } : message;
   }
 
   private applyMessageDeletions(deletions: LiveChatMessageDeletion[]) {
@@ -1044,6 +1100,9 @@ export class AppController {
 
   private resetActiveStream() {
     this.streamGeneration += 1;
+    this.customEmojiStream?.stop();
+    this.customEmojiStream = null;
+    this.customEmojiContent.clear();
     this.reconnectDelayMs = initialReconnectDelayMs;
     this.clearViewerMetricsTimer();
     this.clearDeletionReconcileTimer();

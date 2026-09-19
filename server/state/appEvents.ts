@@ -16,6 +16,7 @@ export type AppEvents = {
   "broadcast:status": [BroadcastStatus];
   "overlay:show": [OverlayState];
   "overlay:hide": [OverlayState];
+  "overlay:content-update": [OverlayState];
   "overlay:test": [OverlayState];
   "overlay:theme:update": [Settings];
   "overlay:connected": [{ connected: boolean; connectedAt?: string }];
