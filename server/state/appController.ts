@@ -62,8 +62,9 @@ import type {
 } from "@/types";
 
 // Retractions never arrive over the stream connection; a periodic list snapshot
-// is the only way to detect them. 60s keeps quota usage predictable.
-const deletionReconcileIntervalMs = 60_000;
+// is the only way to detect them. 30s bounds how long a deleted comment looks
+// normal in the admin view (5 quota units/call ≈ 600 units/hour while live).
+const deletionReconcileIntervalMs = 30_000;
 const autoDetectStartKey = "__auto_detect_current_live__";
 
 export class AppController {

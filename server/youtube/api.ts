@@ -317,7 +317,8 @@ export async function listLiveChatDeletionEvents(liveChatId: string) {
   const response = await youtube.liveChatMessages.list({
     liveChatId,
     part: ["id", "snippet", "authorDetails"],
-    maxResults: 200
+    maxResults: 2000,
+    hl: "ja"
   });
   return collectDeletionEventsFromListItems(response.data.items ?? []);
 }

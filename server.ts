@@ -7,7 +7,7 @@ import { appController } from "@/server/state/appController";
 nextEnv.loadEnvConfig(process.cwd());
 
 const dev = process.env.NODE_ENV !== "production";
-const hostname = "localhost";
+const hostname = "127.0.0.1";
 const port = Number(process.env.PORT ?? 3000);
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
