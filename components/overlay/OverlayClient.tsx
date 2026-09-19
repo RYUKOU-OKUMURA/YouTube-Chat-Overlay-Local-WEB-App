@@ -5,6 +5,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Crown, Sparkles } from "lucide-react";
 import { io, type Socket } from "socket.io-client";
 import { getSuperChatTier } from "@/lib/superChat";
+import { ChatMessageContent, chatMessageDisplayText } from "@/components/common/ChatMessageContent";
 import type { OverlayState, ChatMessage, Theme } from "@/types";
 import { socketEvents } from "@/types";
 
@@ -24,6 +25,7 @@ type ServerToClientEvents = {
   [socketEvents.overlaySync]: (state: OverlayState) => void;
   [socketEvents.overlayShow]: (state: OverlayState) => void;
   [socketEvents.overlayHide]: (state: OverlayState) => void;
+  [socketEvents.overlayContentUpdate]: (state: OverlayState) => void;
   [socketEvents.overlayTest]: (state: OverlayState) => void;
   [socketEvents.overlayThemeUpdate]: (payload: { theme: Theme }) => void;
 };
@@ -283,7 +285,7 @@ function OverlayCard({
   const messageBaseFontSize = theme.fontSize * (isMinimal || isComic ? 1.05 : 1);
   const messageFontSize = theme.autoFitText
     ? autoFitFontSize({
-        text: message.messageText,
+        text: chatMessageDisplayText(message),
         baseFontSize: messageBaseFontSize,
         maxWidth: maxCardWidth,
         lineClamp: messageLineClamp,
@@ -445,7 +447,7 @@ function OverlayCard({
               WebkitLineClamp: messageLineClamp
             }}
           >
-            {message.messageText}
+            <ChatMessageContent message={message} />
           </p>
         </div>
       </div>
@@ -487,7 +489,7 @@ function SuperChatCard({
   const messageBaseFontSize = cardFontSize * 0.95;
   const messageFontSize = theme.autoFitText
     ? autoFitFontSize({
-        text: message.messageText,
+        text: chatMessageDisplayText(message),
         baseFontSize: messageBaseFontSize,
         maxWidth: width,
         lineClamp: messageLineClamp,
@@ -612,7 +614,7 @@ function SuperChatCard({
             WebkitLineClamp: messageLineClamp
           }}
         >
-          {message.messageText}
+          <ChatMessageContent message={message} />
         </p>
       </div>
 
@@ -683,6 +685,7 @@ export function OverlayClient() {
       setOverlayState(state);
       setEventName("hide");
     });
+    socket.on(socketEvents.overlayContentUpdate, (state) => applyOverlayState(state, "sync"));
     socket.on(socketEvents.overlayTest, (state) => applyOverlayState(state, "test"));
     socket.on(socketEvents.overlayThemeUpdate, ({ theme }) => {
       setOverlayState((current) =>

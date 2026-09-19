@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import type { OverlayState } from "@/types";
 import { Badge } from "@/components/common/Badge";
 import { Button } from "@/components/common/Button";
+import { ChatMessageContent } from "@/components/common/ChatMessageContent";
 import { Panel } from "@/components/common/Panel";
 
 function messageTypeLabel(messageType: string) {
@@ -55,7 +56,7 @@ export function OverlayPanel({
               <div className="min-w-0 flex-1">
                 {overlay.theme.showAuthorName ? <div className="truncate text-sm font-semibold">{active.authorName}</div> : null}
                 <div className="mt-1 whitespace-pre-wrap text-sm leading-5" style={activeMessageTextStyle}>
-                  {active.messageText}
+                  <ChatMessageContent message={active} />
                 </div>
                 <div className="mt-2 text-[11px] opacity-80">
                   {messageTypeLabel(active.messageType)} · {new Date(active.publishedAt).toLocaleTimeString()}{" "}

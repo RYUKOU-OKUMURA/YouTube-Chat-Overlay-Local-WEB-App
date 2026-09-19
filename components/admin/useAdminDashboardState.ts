@@ -127,7 +127,7 @@ export function useAdminDashboardState(onNotice: (text: string) => void): UseAdm
               ),
               overlay:
                 prev.overlay.currentMessage?.platformMessageId === message.platformMessageId
-                  ? { ...prev.overlay, currentMessage: null }
+                  ? { ...prev.overlay, currentMessage: message.deletionStatus ? null : message }
                   : prev.overlay
             }
           : prev

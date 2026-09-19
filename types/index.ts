@@ -14,6 +14,10 @@ export type Theme = {
   animationType: "fade" | "slide-up" | "scale";
 };
 
+export type ChatMessageContentSegment =
+  | { kind: "text"; text: string }
+  | { kind: "emoji"; imageUrl: string; alt: string; shortcode?: string };
+
 export type ChatMessage = {
   id: string;
   platformMessageId: string;
@@ -21,6 +25,8 @@ export type ChatMessage = {
   authorImageUrl?: string;
   authorChannelId?: string;
   messageText: string;
+  /** Rich text from YouTube's web chat, when available. */
+  content?: ChatMessageContentSegment[];
   messageType: string;
   isMember: boolean;
   isModerator: boolean;
@@ -180,6 +186,7 @@ export const socketEvents = {
   overlayConnected: "overlay:connected",
   overlayShow: "overlay:show",
   overlayHide: "overlay:hide",
+  overlayContentUpdate: "overlay:content-update",
   overlayThemeUpdate: "overlay:theme:update",
   overlayTest: "overlay:test"
 } as const;
