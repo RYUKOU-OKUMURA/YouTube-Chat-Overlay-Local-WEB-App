@@ -42,6 +42,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
     refreshViewerMetrics,
     testMessage,
     showMessage,
+    showNextMessage,
     hideOverlay,
     copyOverlayUrl,
     copyMessage
@@ -259,6 +260,7 @@ export function AdminDashboard({ initialNotice }: { initialNotice?: string }) {
               compactMode={compactMode}
               setCompactMode={setCompactMode}
               onShowMessage={showMessage}
+              onShowNextMessage={showNextMessage}
               onHideActiveMessage={hideOverlay}
               onCopyMessage={copyMessage}
               busyAction={busyAction}

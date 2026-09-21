@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getActiveLiveBroadcastInfo: vi.fn(),
   getLiveChatInfo: vi.fn(),
   getViewerMetrics: vi.fn(),
+  getLiveChatSnapshot: vi.fn(),
   listLiveChatDeletionEvents: vi.fn(),
   streamLiveChatMessages: vi.fn(),
   classifyYouTubeError: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock("@/server/youtube/api", () => ({
   getActiveLiveBroadcastInfo: mocks.getActiveLiveBroadcastInfo,
   getLiveChatInfo: mocks.getLiveChatInfo,
   getViewerMetrics: mocks.getViewerMetrics,
+  getLiveChatSnapshot: mocks.getLiveChatSnapshot,
   listLiveChatDeletionEvents: mocks.listLiveChatDeletionEvents,
   streamLiveChatMessages: mocks.streamLiveChatMessages,
   classifyYouTubeError: mocks.classifyYouTubeError
@@ -85,6 +87,7 @@ describe("AppController stream lifecycle", () => {
       status: "available"
     });
     mocks.listLiveChatDeletionEvents.mockResolvedValue([]);
+    mocks.getLiveChatSnapshot.mockResolvedValue({ messages: [], deletions: [], saturated: false });
     mocks.classifyYouTubeError.mockImplementation((error: unknown) => {
       const classified = (error as { classified?: unknown }).classified;
       return classified ?? { kind: "unknown", message: "stream failed", retryable: false };
@@ -562,6 +565,7 @@ describe("AppController stream lifecycle", () => {
     controller.events.on("comment:update", (message) => updates.push(message));
     controller.events.on("overlay:hide", (overlay) => overlayStates.push(overlay));
 
+    mocks.getLiveChatSnapshot.mockResolvedValue({ messages: [paidMessage], deletions: [], saturated: false });
     await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
     await vi.waitFor(async () => expect(await controller.getMessages()).toHaveLength(1));
     await controller.showMessage("paid-message");
@@ -583,11 +587,11 @@ describe("AppController stream lifecycle", () => {
       messageText: "このコメントは削除されました。",
       deletionStatus: "deleted"
     });
-    expect(state.overlay.currentMessage).toBeNull();
+    expect(state.overlay.currentMessage).toMatchObject({ id: "paid-message" });
     expect(updates).toHaveLength(1);
     expect(updates[0]).toMatchObject({ id: "paid-message", deletionStatus: "deleted" });
-    expect(overlayStates[overlayStates.length - 1]?.currentMessage).toBeNull();
-    await expect(controller.showMessage("paid-message")).rejects.toThrow("削除済みコメントはOBSに表示できません。");
+    expect(overlayStates).toHaveLength(0);
+    await expect(controller.showMessage("paid-message")).rejects.toThrow("削除済みコメントは表示できません。");
     await controller.stopBroadcast();
   });
 
@@ -772,6 +776,15 @@ describe("AppController stream lifecycle", () => {
     const controller = new AppController();
     controller.events.on("comment:update", (message) => updates.push(message));
 
+    mocks.getLiveChatSnapshot.mockResolvedValue({
+      messages: [
+        message("banned-message-1", { authorChannelId: "banned-channel-1" }),
+        message("banned-message-2", { authorChannelId: "banned-channel-1" }),
+        message("other-message", { authorChannelId: "other-channel-1" })
+      ],
+      deletions: [],
+      saturated: false
+    });
     await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
     await vi.waitFor(async () => expect(await controller.getMessages()).toHaveLength(3));
     await controller.showMessage("banned-message-1");
@@ -792,7 +805,7 @@ describe("AppController stream lifecycle", () => {
       expect(messages.find((item) => item.id === "other-message")).not.toHaveProperty("deletionStatus");
     });
 
-    expect((await controller.getState()).overlay.currentMessage).toBeNull();
+    expect((await controller.getState()).overlay.currentMessage).toMatchObject({ id: "banned-message-1" });
     expect(updates.map((item) => item.id).sort()).toEqual(["banned-message-1", "banned-message-2"]);
     await controller.stopBroadcast();
   });
@@ -983,7 +996,30 @@ describe("AppController stream lifecycle", () => {
     await controller.stopBroadcast();
   });
 
-  test("applies retractions discovered by the list reconcile to streamed messages", async () => {
+  test("shows queued comments in receive order after snapshot validation", async () => {
+    const first = message("first-message", { publishedAt: "2026-04-27T12:00:00.000Z" });
+    const second = message("second-message", { publishedAt: "2026-04-27T12:00:01.000Z" });
+    mocks.streamLiveChatMessages.mockImplementation(async function* () {
+      yield { messages: [first, second], deletions: [], nextPageToken: "token-1" };
+      await new Promise(() => undefined);
+    });
+    mocks.getLiveChatSnapshot.mockResolvedValue({
+      messages: [first, second],
+      deletions: [],
+      saturated: false
+    });
+
+    const { AppController } = await import("@/server/state/appController");
+    const controller = new AppController();
+    await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+    await vi.waitFor(async () => expect((await controller.getMessages()).length).toBe(2));
+
+    expect((await controller.showNextMessage()).currentMessage?.id).toBe("first-message");
+    expect((await controller.showNextMessage()).currentMessage?.id).toBe("second-message");
+    await controller.stopBroadcast();
+  });
+
+  test("checks list snapshot retractions immediately before display", async () => {
     mocks.streamLiveChatMessages.mockImplementation(async function* () {
       yield {
         messages: [
@@ -998,25 +1034,28 @@ describe("AppController stream lifecycle", () => {
       };
       await new Promise(() => undefined);
     });
-    mocks.listLiveChatDeletionEvents.mockResolvedValue([
-      {
-        targetAuthorChannelId: "channel-1",
-        authorRetractionAnchor: "2026-04-27T12:01:00.000Z",
-        deletionStatus: "retracted",
-        deletedAt: "2026-04-27T12:01:00.000Z"
-      }
-    ]);
+    mocks.getLiveChatSnapshot.mockResolvedValue({
+      messages: [],
+      deletions: [
+        {
+          targetAuthorChannelId: "channel-1",
+          authorRetractionAnchor: "2026-04-27T12:01:00.000Z",
+          deletionStatus: "retracted",
+          deletedAt: "2026-04-27T12:01:00.000Z"
+        }
+      ],
+      saturated: false
+    });
 
     const { AppController } = await import("@/server/state/appController");
     const controller = new AppController();
     await controller.startBroadcast({ broadcastUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
-    await vi.waitFor(async () => {
-      expect(mocks.listLiveChatDeletionEvents).toHaveBeenCalledWith("live-chat-1");
-      const messages = await controller.getMessages();
-      expect(messages.find((item) => item.id === "original-msg")).toMatchObject({
-        deletionStatus: "retracted",
-        messageText: "このコメントは投稿者により取り消されました。"
-      });
+    await vi.waitFor(async () => expect((await controller.getMessages()).length).toBe(1));
+    await expect(controller.showMessage("original-msg")).rejects.toThrow("削除済みコメントは表示できません。");
+    expect(mocks.getLiveChatSnapshot).toHaveBeenCalledWith("live-chat-1");
+    expect((await controller.getMessages()).find((item) => item.id === "original-msg")).toMatchObject({
+      deletionStatus: "retracted",
+      messageText: "このコメントは投稿者により取り消されました。"
     });
     await controller.stopBroadcast();
   });

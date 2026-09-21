@@ -189,6 +189,37 @@ export function useAdminActions({ setState, broadcastUrl, setBroadcastUrl, setNo
     }
   }
 
+  async function showNextMessage() {
+    setBusyAction("show-next");
+    try {
+      const next = await fetchJson<AppState["overlay"]>("/api/messages/next/show", { method: "POST" });
+      const displayed = next.currentMessage;
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              messages: displayed
+                ? prev.messages.map((item) =>
+                    item.id === displayed.id ? { ...item, displayedAt: displayed.displayedAt } : item
+                  )
+                : prev.messages,
+              superChats: displayed
+                ? prev.superChats.map((item) =>
+                    item.id === displayed.id ? { ...item, displayedAt: displayed.displayedAt } : item
+                  )
+                : prev.superChats,
+              overlay: next
+            }
+          : prev
+      );
+      setNotice(displayed ? "次のコメントを表示しました。" : "表示可能なコメントがありません。");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "次のコメントを表示できませんでした。");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function hideOverlay() {
     setBusyAction("hide");
     try {
@@ -221,6 +252,7 @@ export function useAdminActions({ setState, broadcastUrl, setBroadcastUrl, setNo
     refreshViewerMetrics,
     testMessage,
     showMessage,
+    showNextMessage,
     hideOverlay,
     copyOverlayUrl,
     copyMessage

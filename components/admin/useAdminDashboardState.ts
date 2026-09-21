@@ -124,11 +124,7 @@ export function useAdminDashboardState(onNotice: (text: string) => void): UseAdm
               ),
               superChats: prev.superChats.map((item) =>
                 item.platformMessageId === message.platformMessageId ? message : item
-              ),
-              overlay:
-                prev.overlay.currentMessage?.platformMessageId === message.platformMessageId
-                  ? { ...prev.overlay, currentMessage: null }
-                  : prev.overlay
+              )
             }
           : prev
       );

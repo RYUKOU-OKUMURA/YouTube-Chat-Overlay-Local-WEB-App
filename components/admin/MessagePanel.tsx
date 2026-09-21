@@ -114,6 +114,7 @@ export function MessagePanel({
   compactMode,
   setCompactMode,
   onShowMessage,
+  onShowNextMessage,
   onHideActiveMessage,
   onCopyMessage,
   busyAction,
@@ -137,6 +138,7 @@ export function MessagePanel({
   compactMode: boolean;
   setCompactMode: (value: boolean) => void;
   onShowMessage: (message: ChatMessage) => void;
+  onShowNextMessage: () => void;
   onHideActiveMessage: () => void;
   onCopyMessage: (message: ChatMessage) => void;
   busyAction: string | null;
@@ -204,6 +206,15 @@ export function MessagePanel({
                 );
               })}
             </div>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Play className="h-3.5 w-3.5" />}
+              onClick={onShowNextMessage}
+              disabled={busyAction === "show-next"}
+            >
+              次を表示
+            </Button>
             <Button size="sm" variant="primary" icon={<ArrowDownToLine className="h-3.5 w-3.5" />} onClick={onJumpToLatest}>
               最新へ追従
             </Button>

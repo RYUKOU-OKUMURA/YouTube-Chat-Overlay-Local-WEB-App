@@ -1,10 +1,15 @@
 import { google } from "googleapis";
 import type { youtube_v3 } from "googleapis";
 import { getAuthorizedClient } from "@/server/youtube/oauth";
-import { readPollingIntervalMillis, type LiveChatMessageDeletion } from "@/server/youtube/deletions";
+import {
+  deletionKey,
+  mapRemovalPlaceholderDeletion,
+  readPollingIntervalMillis,
+  type LiveChatMessageDeletion
+} from "@/server/youtube/deletions";
 import { YouTubeDiagnosticError } from "@/server/youtube/errors";
 import { normalizeStreamResponse, parseLiveChatStreamResponses } from "@/server/youtube/streamParser";
-import { collectDeletionEventsFromListItems, mapLiveChatStreamItems } from "@/server/youtube/messageMapping";
+import { mapLiveChatStreamItems } from "@/server/youtube/messageMapping";
 import { resolveLiveChatAuthorNames } from "@/server/youtube/authorNames";
 import type { ChatMessage } from "@/types";
 
@@ -64,6 +69,16 @@ export type StreamLiveChatMessagesInput = {
   signal?: AbortSignal;
   profileImageSize?: number;
 };
+
+/** A current, bounded chat view used to validate a message immediately before display. */
+export type LiveChatSnapshot = {
+  messages: ChatMessage[];
+  deletions: LiveChatMessageDeletion[];
+  /** True when the requested window was filled and absence cannot prove removal. */
+  saturated: boolean;
+};
+
+const displaySnapshotMaxResults = 200;
 
 function parseConcurrentViewers(value: youtube_v3.Schema$VideoLiveStreamingDetails["concurrentViewers"]) {
   if (value === null || value === undefined || value === "") {
@@ -311,14 +326,36 @@ export async function* streamLiveChatMessages({
   }
 }
 
-export async function listLiveChatDeletionEvents(liveChatId: string) {
+export async function getLiveChatSnapshot(liveChatId: string): Promise<LiveChatSnapshot> {
   const auth = await getAuthorizedClient();
   const youtube = google.youtube({ version: "v3", auth });
   const response = await youtube.liveChatMessages.list({
     liveChatId,
     part: ["id", "snippet", "authorDetails"],
-    maxResults: 2000,
+    maxResults: displaySnapshotMaxResults,
     hl: "ja"
   });
-  return collectDeletionEventsFromListItems(response.data.items ?? []);
+  const items = response.data.items ?? [];
+  const { messages, deletions } = mapLiveChatStreamItems(items);
+  const placeholders = messages
+    .map((message) => mapRemovalPlaceholderDeletion(message))
+    .filter((deletion): deletion is LiveChatMessageDeletion => deletion !== null);
+  const merged = new Map<string, LiveChatMessageDeletion>();
+  for (const deletion of [...deletions, ...placeholders]) {
+    const key = deletionKey(deletion);
+    if (key) {
+      merged.set(key, deletion);
+    }
+  }
+
+  return {
+    messages,
+    deletions: [...merged.values()],
+    saturated: items.length >= displaySnapshotMaxResults
+  };
+}
+
+/** @deprecated Deletion checks now use getLiveChatSnapshot immediately before display. */
+export async function listLiveChatDeletionEvents(liveChatId: string) {
+  return (await getLiveChatSnapshot(liveChatId)).deletions;
 }
